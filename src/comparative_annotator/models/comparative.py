@@ -10,17 +10,24 @@ class ComparativeLocus:
     seed_species: str
     seed_transcript: str
 
-    species_loci: dict[str, list[str]] = field(default_factory=dict)
+    ortholog_loci: dict[str, list[str]] = field(default_factory=dict)
+    paralog_loci: dict[str, list[str]] = field(default_factory=dict)
 
-    def add_species_locus(self, species: str, locus_id: str):
+    missing_annotations: dict[str, list[str]] = field(default_factory=dict)
 
-        if species not in self.species_loci:
-            self.species_loci[species] = []
+    def add_ortholog(self, species: str, locus_id: str):
 
-        if locus_id not in self.species_loci[species]:
-            self.species_loci[species].append(locus_id)
+        self.ortholog_loci.setdefault(species, []).append(locus_id)
+
+    def add_paralog(self, species: str, locus_id: str):
+
+        self.paralog_loci.setdefault(species, []).append(locus_id)
+
+    def add_missing_projection(self, species: str, projection_id: str):
+
+        self.missing_annotations.setdefault(species, []).append(projection_id)
 
     @property
     def species_count(self):
 
-        return len(self.species_loci)
+        return len(self.ortholog_loci)
