@@ -133,8 +133,52 @@ where = ["src"]
 testpaths = ["tests"]
 ```
 
+# comparative-annotator
 
+A comparative framework for adjudicating gene models across related genomes using multiple annotation sources and whole-genome alignment.
 
+## Development install
+
+```bash
+pip install -e .
+```
+
+pytest
+
+## First files to create
+
+You do not need to fill everything at once.
+
+I would start with only these:
+
+- `pyproject.toml`
+- `src/comparative_annotator/__init__.py`
+- `src/comparative_annotator/cli.py`
+- `src/comparative_annotator/config/manifest.py`
+- `src/comparative_annotator/models/transcript.py`
+- `src/comparative_annotator/models/locus.py`
+- `src/comparative_annotator/io/gff3.py`
+- `src/comparative_annotator/loci/species_loci.py`
+- `tests/test_manifest.py`
+- `tests/test_gff3_parser.py`
+- `tests/test_species_loci.py`
+
+That is enough for the first milestone.
+
+## Minimal CLI
+
+For now, `cli.py` can just be:
+
+```python
+def main():
+    print("comparative-annotator")
+```
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pytest
+```
 
 
 
