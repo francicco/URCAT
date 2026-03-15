@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from comparative_annotator.models.projected_transcript import ProjectedTranscript
 from comparative_annotator.models.locus import SpeciesLocus
+from comparative_annotator.models.match import ProjectionLocusMatch
 
 
 def overlaps(a_start, a_end, b_start, b_end):
@@ -12,14 +13,9 @@ def find_overlapping_species_loci(
     projected: ProjectedTranscript,
     species_loci: list[SpeciesLocus],
 ):
-    """
-    Return all loci overlapping a projected transcript candidate.
-    """
-
     hits = []
 
     for locus in species_loci:
-
         if locus.seqid != projected.seqid:
             continue
 
@@ -36,10 +32,6 @@ def locus_overlap_fraction(
     projected: ProjectedTranscript,
     locus: SpeciesLocus,
 ):
-    """
-    Fraction of the projected transcript span overlapping a locus.
-    """
-
     overlap_start = max(projected.start, locus.start)
     overlap_end = min(projected.end, locus.end)
 
@@ -48,6 +40,51 @@ def locus_overlap_fraction(
     proj_len = projected.end - projected.start
 
     if proj_len == 0:
-        return 0
+        return 0.0
 
     return overlap / proj_len
+
+
+def projected_transcript_id(projected: ProjectedTranscript) -> str:
+    return (
+        f"{projected.source_species}:{projected.source_transcript}"
+        f"->{projected.species}:{projected.seqid}:{projected.start}-{projected.end}:{projected.strand}"
+    )
+
+
+def match_projected_transcript_to_loci(
+    projected: ProjectedTranscript,
+    species_loci: list[SpeciesLocus],
+):
+    overlapping = find_overlapping_species_loci(projected, species_loci)
+
+    if not overlapping:
+        return []
+
+    classification = "ortholog_candidate" if len(overlapping) == 1 else "paralog_candidate"
+
+    matches = []
+    pid = projected_transcript_id(projected)
+
+    for locus in overlapping:
+        matches.append(
+            ProjectionLocusMatch(
+                projected_id=pid,
+                species=projected.species,
+                locus_id=locus.locus_id,
+                overlap_fraction=locus_overlap_fraction(projected, locus),
+                classification=classification,
+            )
+        )
+
+    return sorted(matches, key=lambda x: x.overlap_fraction, reverse=True)
+
+
+def classify_unmatched_projection(
+    projected: ProjectedTranscript,
+    species_loci: list[SpeciesLocus],
+):
+    overlapping = find_overlapping_species_loci(projected, species_loci)
+    if overlapping:
+        return None
+    return "missing_annotation_candidate"
