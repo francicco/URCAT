@@ -13,7 +13,7 @@ def find_overlapping_species_loci(
     species_loci: list[SpeciesLocus],
 ):
     """
-    Find loci overlapping a projected transcript candidate.
+    Return all loci overlapping a projected transcript candidate.
     """
 
     hits = []
@@ -30,3 +30,24 @@ def find_overlapping_species_loci(
             hits.append(locus)
 
     return hits
+
+
+def locus_overlap_fraction(
+    projected: ProjectedTranscript,
+    locus: SpeciesLocus,
+):
+    """
+    Fraction of the projected transcript span overlapping a locus.
+    """
+
+    overlap_start = max(projected.start, locus.start)
+    overlap_end = min(projected.end, locus.end)
+
+    overlap = max(0, overlap_end - overlap_start)
+
+    proj_len = projected.end - projected.start
+
+    if proj_len == 0:
+        return 0
+
+    return overlap / proj_len
