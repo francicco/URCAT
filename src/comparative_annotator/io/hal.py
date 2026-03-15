@@ -8,6 +8,7 @@ import subprocess
 
 from comparative_annotator.models.projection import ProjectionInterval
 
+from comparative_annotator.models.projected_transcript import ProjectedTranscript
 
 class HALError(RuntimeError):
     pass
