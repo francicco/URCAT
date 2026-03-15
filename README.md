@@ -177,9 +177,20 @@ def main():
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-pytest
 ```
 
+```bash
+comparative-annotator examples/manifest.yaml
+```
+
+First real development milestones
+
+Next steps should be:
+	1.	unit tests for the GFF3 parser
+	2.	unit tests for species locus builder
+	3.	HAL adapter interface
+	4.	comparative locus builder
+	5.	iterative adjudicator
 
 
 
