@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comparative-annotator"
+version = "0.1.0"
+description = "Comparative annotation adjudication framework"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  {name = "Francesco Cicconardi"}
+]
+dependencies = [
+  "pyyaml>=6.0",
+  "pytest>=8.0",
+]
+
+[project.scripts]
+comparative-annotator = "comparative_annotator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
