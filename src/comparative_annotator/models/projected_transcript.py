@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ProjectedTranscript:
-
     species: str
     seqid: str
     strand: str
@@ -18,21 +17,17 @@ class ProjectedTranscript:
     identity: float | None = None
     coverage: float | None = None
 
-    def add_exon(self, start: int, end: int):
-
+    def add_exon(self, start: int, end: int) -> None:
         self.exons.append((start, end))
 
     @property
-    def start(self):
-
+    def start(self) -> int:
         return min(e[0] for e in self.exons)
 
     @property
-    def end(self):
-
+    def end(self) -> int:
         return max(e[1] for e in self.exons)
 
     @property
-    def exon_count(self):
-
+    def exon_count(self) -> int:
         return len(self.exons)
