@@ -63,3 +63,85 @@ comparative-annotator/
 └── workflow/
     └── Snakefile
 ```
+
+What each area is for
+
+`config/`
+reads and validates the YAML manifest.
+
+`io/`
+parses external files and writes outputs.
+This is where GFF3/GTF/HAL adapters live.
+
+`models/`
+defines your main classes:
+	•	transcript
+	•	species locus
+	•	comparative locus
+	•	consensus
+
+`normalize/`
+converts parsed annotations into the internal format.
+
+`loci/`
+builds local loci and comparative loci.
+
+`scoring/`
+contains the scoring functions, split into local, projection, comparative, and prior.
+
+`adjudication/`
+contains the iterative algorithm that picks the best candidates.
+
+`qc/`
+flags weird annotations and suspicious loci.
+
+`utils/`
+small helper code only.
+
+
+### Minimal pyproject.toml
+
+```
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comparative-annotator"
+version = "0.1.0"
+description = "Comparative annotation adjudication framework"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  {name = "Francesco Cicconardi"}
+]
+dependencies = [
+  "pyyaml>=6.0",
+  "pytest>=8.0",
+]
+
+[project.scripts]
+comparative-annotator = "comparative_annotator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
