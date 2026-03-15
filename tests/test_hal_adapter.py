@@ -3,6 +3,58 @@ from tempfile import NamedTemporaryFile
 
 from comparative_annotator.io.hal import HALAdapter, HALCommandResult
 
+def project_transcript(
+    self,
+    transcript,
+    target_species: str,
+):
+    """
+    Project each exon of a transcript and reconstruct projected transcripts.
+    """
+
+    exon_projections = []
+
+    for exon_start, exon_end in transcript.exons:
+
+        intervals = self.project_interval(
+            source_species=transcript.species,
+            target_species=target_species,
+            seqid=transcript.seqid,
+            start=exon_start,
+            end=exon_end,
+            strand=transcript.strand,
+            source_transcript=transcript.transcript_id,
+        )
+
+        exon_projections.append(intervals)
+
+    # flatten projections
+    flat = []
+    for block in exon_projections:
+        flat.extend(block)
+
+    if not flat:
+        return []
+
+    grouped = {}
+
+    for proj in flat:
+
+        key = (proj.seqid, proj.strand)
+
+        if key not in grouped:
+            grouped[key] = ProjectedTranscript(
+                species=proj.species,
+                seqid=proj.seqid,
+                strand=proj.strand,
+                source_species=proj.source_species,
+                source_transcript=proj.source_transcript,
+            )
+
+        grouped[key].add_exon(proj.start, proj.end)
+
+    return list(grouped.values())
+
 
 def fake_runner_success_factory(expected_output: str):
     def _runner(cmd):
