@@ -1,58 +1,71 @@
+from __future__ import annotations
+
 from comparative_annotator.models.locus import SpeciesLocus
+from comparative_annotator.models.transcript import CandidateTranscript
 
 
-def build_species_loci(transcripts):
+def overlaps(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+    return a_start <= b_end and b_start <= a_end
+
+
+def build_species_loci(
+    transcripts: list[CandidateTranscript],
+    species: str,
+) -> list[SpeciesLocus]:
+    """
+    Build species-local loci by grouping overlapping transcripts
+    on the same seqid and strand.
+    """
 
     txs = sorted(
-        transcripts,
-        key=lambda x: (x.seqid, x.start)
+        [tx for tx in transcripts if tx.species == species],
+        key=lambda x: (x.seqid, x.strand, x.start, x.end),
     )
 
-    loci = []
-
-    current = None
+    loci: list[SpeciesLocus] = []
+    current: SpeciesLocus | None = None
     counter = 0
 
     for tx in txs:
-
         if current is None:
-
             counter += 1
-
             current = SpeciesLocus(
-                locus_id=f"locus_{counter}",
-                species=tx.species,
+                locus_id=f"{species}_locus_{counter}",
+                species=species,
                 seqid=tx.seqid,
                 start=tx.start,
                 end=tx.end,
                 strand=tx.strand,
                 transcripts=[tx.transcript_id],
             )
-
+            tx.attributes["locus_id"] = current.locus_id
             continue
 
-        if tx.start <= current.end:
+        same_context = (
+            tx.seqid == current.seqid
+            and tx.strand == current.strand
+        )
 
+        if same_context and overlaps(tx.start, tx.end, current.start, current.end):
             current.transcripts.append(tx.transcript_id)
+            current.start = min(current.start, tx.start)
             current.end = max(current.end, tx.end)
-
+            tx.attributes["locus_id"] = current.locus_id
         else:
-
             loci.append(current)
-
             counter += 1
-
             current = SpeciesLocus(
-                locus_id=f"locus_{counter}",
-                species=tx.species,
+                locus_id=f"{species}_locus_{counter}",
+                species=species,
                 seqid=tx.seqid,
                 start=tx.start,
                 end=tx.end,
                 strand=tx.strand,
                 transcripts=[tx.transcript_id],
             )
+            tx.attributes["locus_id"] = current.locus_id
 
-    if current:
+    if current is not None:
         loci.append(current)
 
     return loci
