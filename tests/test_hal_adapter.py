@@ -3,57 +3,56 @@ from tempfile import NamedTemporaryFile
 
 from comparative_annotator.io.hal import HALAdapter, HALCommandResult
 
-def project_transcript(
-    self,
-    transcript,
-    target_species: str,
-):
-    """
-    Project each exon of a transcript and reconstruct projected transcripts.
-    """
+ def project_transcript(
+     self,
+     transcript,
+     target_species: str,
+ ) -> list[ProjectedTranscript]:
+     """
+     Project each exon of a transcript independently and group the results
+     into projected transcript candidates.
 
-    exon_projections = []
+     Version 1 grouping is deliberately simple:
+     projected exons are grouped by (seqid, strand).
+     """
+     exon_projections = []
 
-    for exon_start, exon_end in transcript.exons:
+     for exon_start, exon_end in transcript.exons:
+         intervals = self.project_interval(
+             source_species=transcript.species,
+             target_species=target_species,
+             seqid=transcript.seqid,
+             start=exon_start,
+             end=exon_end,
+             strand=transcript.strand,
+             source_transcript=transcript.transcript_id,
+         )
+         exon_projections.append(intervals)
 
-        intervals = self.project_interval(
-            source_species=transcript.species,
-            target_species=target_species,
-            seqid=transcript.seqid,
-            start=exon_start,
-            end=exon_end,
-            strand=transcript.strand,
-            source_transcript=transcript.transcript_id,
-        )
+     flat: list = []
+     for block in exon_projections:
+         flat.extend(block)
 
-        exon_projections.append(intervals)
+     if not flat:
+         return []
 
-    # flatten projections
-    flat = []
-    for block in exon_projections:
-        flat.extend(block)
+     grouped: dict[tuple[str, str], ProjectedTranscript] = {}
 
-    if not flat:
-        return []
+     for proj in flat:
+         key = (proj.seqid, proj.strand)
 
-    grouped = {}
+         if key not in grouped:
+             grouped[key] = ProjectedTranscript(
+                 species=proj.species,
+                 seqid=proj.seqid,
+                 strand=proj.strand,
+                 source_species=proj.source_species,
+                 source_transcript=proj.source_transcript,
+             )
 
-    for proj in flat:
+         grouped[key].add_exon(proj.start, proj.end)
 
-        key = (proj.seqid, proj.strand)
-
-        if key not in grouped:
-            grouped[key] = ProjectedTranscript(
-                species=proj.species,
-                seqid=proj.seqid,
-                strand=proj.strand,
-                source_species=proj.source_species,
-                source_transcript=proj.source_transcript,
-            )
-
-        grouped[key].add_exon(proj.start, proj.end)
-
-    return list(grouped.values())
+     return list(grouped.values())
 
 
 def fake_runner_success_factory(expected_output: str):
