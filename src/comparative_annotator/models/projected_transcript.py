@@ -19,6 +19,7 @@ class ProjectedTranscript:
 
     def add_exon(self, start: int, end: int) -> None:
         self.exons.append((start, end))
+        self.exons.sort()
 
     @property
     def start(self) -> int:
