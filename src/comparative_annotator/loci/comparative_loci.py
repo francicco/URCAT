@@ -51,7 +51,18 @@ def build_comparative_locus(
             species_loci_dict.get(proj.species, [])
         )
 
-        for locus_id in loci:
-            clocus.add_species_locus(proj.species, locus_id)
+        if not loci:
+            continue
+
+        best, alternatives = choose_best_locus(proj, loci)
+
+        if best:
+            clocus.set_primary(proj.species, best.locus_id)
+
+        if alternatives:
+            clocus.set_alternatives(
+                proj.species,
+                [a.locus_id for a in alternatives]
+            )
 
     return clocus
