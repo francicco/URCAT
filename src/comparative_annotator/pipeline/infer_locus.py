@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pprint import pprint
+
 from comparative_annotator.loci.comparative_builder import (
     build_comparative_locus_from_projection,
 )
@@ -25,6 +27,28 @@ def infer_comparative_locus(
     """
 
     projected_exon_blocks = []
+
+    for exon_start, exon_end in seed_transcript.exons:
+        intervals = hal_adapter.project_interval(
+            source_species=seed_transcript.species,
+            target_species=target_species,
+            seqid=seed_transcript.seqid,
+            start=exon_start,
+            end=exon_end,
+            strand=seed_transcript.strand,
+            source_transcript=seed_transcript.transcript_id,
+        )
+        print(f"Projected exon {exon_start}-{exon_end} to {target_species}:")
+        pprint(intervals)
+        projected_exon_blocks.append(intervals)
+
+    projected_transcripts = reconstruct_projected_transcripts(
+        seed_transcript,
+        projected_exon_blocks,
+    )
+
+    print(f"Reconstructed projected transcripts for {target_species}:")
+    pprint(projected_transcripts)
 
     for exon_start, exon_end in seed_transcript.exons:
         intervals = hal_adapter.project_interval(
