@@ -3,6 +3,9 @@ from comparative_annotator.loci.species_loci import build_species_loci
 from comparative_annotator.io.hal import HALAdapter
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 
+from comparative_annotator.projection.matching import nearest_species_locus
+from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
+
 
 def main():
     hmel = load_gff3("data/Hmel202001o.test.gff3", species="Hmel")
@@ -19,11 +22,41 @@ def main():
         "Diul": diul_loci,
     }
 
-    seed = hmel["transcript:Hmel202001oG1.1"]
+    seed = hmel["transcript:Hmel202001oG3.1"]
 
     hal = HALAdapter("data/3SpChr21.hal")
 
     for target in ["Eisa", "Diul"]:
+        projected_exon_blocks = []
+
+        for exon_start, exon_end in seed.exons:
+            intervals = hal.project_interval(
+                source_species=seed.species,
+                target_species=target,
+                seqid=seed.seqid,
+                start=exon_start,
+                end=exon_end,
+                strand=seed.strand,
+                source_transcript=seed.transcript_id,
+            )
+            print(f"Projected exon {exon_start}-{exon_end} to {target}:")
+            print(intervals)
+            projected_exon_blocks.append(intervals)
+
+        projected_transcripts = reconstruct_projected_transcripts(
+            seed,
+            projected_exon_blocks,
+        )
+
+        print(f"Reconstructed projected transcripts for {target}:")
+        print(projected_transcripts)
+
+        for pt in projected_transcripts:
+            nearest, dist = nearest_species_locus(pt, species_loci[target])
+            print("projected transcript:", pt)
+            print("nearest locus:", nearest)
+            print("distance:", dist)
+
         clocus = infer_comparative_locus(
             seed_transcript=seed,
             target_species=target,
