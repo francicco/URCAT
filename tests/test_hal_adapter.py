@@ -3,7 +3,7 @@ from tempfile import NamedTemporaryFile
 
 from comparative_annotator.io.hal import HALAdapter, HALCommandResult
 
- def project_transcript(
+def project_transcript(
      self,
      transcript,
      target_species: str,
