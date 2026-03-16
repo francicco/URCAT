@@ -1,7 +1,46 @@
 from comparative_annotator.models.transcript import CandidateTranscript
 from comparative_annotator.models.projection import ProjectionInterval
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
+from comparative_annotator.models.projection import ProjectionInterval
+from comparative_annotator.projection.reconstruct import merge_projection_blocks
 
+def test_merge_fragmented_projection_blocks():
+    blocks = [
+        ProjectionInterval(
+            species="Eisa",
+            seqid="Eisa2100",
+            start=1572277,
+            end=1572320,
+            strand="+",
+            source_species="Hmel",
+            source_transcript="tx1",
+        ),
+        ProjectionInterval(
+            species="Eisa",
+            seqid="Eisa2100",
+            start=1572112,
+            end=1572268,
+            strand="+",
+            source_species="Hmel",
+            source_transcript="tx1",
+        ),
+        ProjectionInterval(
+            species="Eisa",
+            seqid="Eisa2100",
+            start=1572058,
+            end=1572110,
+            strand="+",
+            source_species="Hmel",
+            source_transcript="tx1",
+        ),
+    ]
+
+    merged = merge_projection_blocks(blocks)
+
+    assert len(merged) == 1
+    assert merged[0].seqid == "Eisa2100"
+    assert merged[0].start == 1572058
+    assert merged[0].end == 1572320
 
 def test_reconstruct_single_clean_chain():
     tx = CandidateTranscript(
