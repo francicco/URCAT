@@ -88,3 +88,32 @@ def classify_unmatched_projection(
     if overlapping:
         return None
     return "missing_annotation_candidate"
+
+
+def nearest_species_locus(
+    projected: ProjectedTranscript,
+    species_loci: list[SpeciesLocus],
+):
+    """
+    Return the nearest locus on the same seqid, regardless of overlap.
+    """
+    candidates = [l for l in species_loci if l.seqid == projected.seqid]
+    if not candidates:
+        return None, None
+
+    best_locus = None
+    best_distance = None
+
+    for locus in candidates:
+        if projected.end < locus.start:
+            dist = locus.start - projected.end
+        elif locus.end < projected.start:
+            dist = projected.start - locus.end
+        else:
+            dist = 0
+
+        if best_distance is None or dist < best_distance:
+            best_distance = dist
+            best_locus = locus
+
+    return best_locus, best_distance
