@@ -34,3 +34,4 @@ def test_build_comparative_locus():
     )
 
     assert "Dryas" in clocus.ortholog_loci
+    assert clocus.primary["Dryas"] == "dry_locus1"
