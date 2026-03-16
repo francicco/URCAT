@@ -33,5 +33,5 @@ def test_build_comparative_locus():
         species_loci
     )
 
-    assert "Dryas" in clocus.ortholog_loci
+    assert "Dryas" in clocus.primary
     assert clocus.primary["Dryas"] == "dry_locus1"
