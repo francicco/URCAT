@@ -4,6 +4,8 @@ from comparative_annotator.models.comparative import ComparativeLocus
 from comparative_annotator.models.projection import ProjectionInterval
 from comparative_annotator.models.locus import SpeciesLocus
 
+from comparative_annotator.projection.adjudication import choose_best_locus
+from comparative_annotator.projection.matching import find_overlapping_loci
 
 def overlaps(a_start, a_end, b_start, b_end):
 
