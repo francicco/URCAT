@@ -1,33 +1,8 @@
 from __future__ import annotations
 
 from comparative_annotator.models.comparative import ComparativeLocus
-from comparative_annotator.models.projection import ProjectionInterval
-from comparative_annotator.models.locus import SpeciesLocus
-
 from comparative_annotator.projection.adjudication import choose_best_locus
-from comparative_annotator.projection.matching import find_overlapping_loci
-
-def overlaps(a_start, a_end, b_start, b_end):
-
-    return a_start <= b_end and b_start <= a_end
-
-
-def find_overlapping_loci(interval, species_loci):
-
-    hits = []
-
-    for locus in species_loci:
-
-        if locus.seqid != interval.seqid:
-            continue
-
-        if locus.strand != interval.strand:
-            continue
-
-        if overlaps(interval.start, interval.end, locus.start, locus.end):
-            hits.append(locus.locus_id)
-
-    return hits
+from comparative_annotator.projection.matching import find_overlapping_species_loci
 
 
 def build_comparative_locus(
@@ -37,7 +12,6 @@ def build_comparative_locus(
     projections,
     species_loci_dict,
 ):
-
     clocus = ComparativeLocus(
         locus_id=locus_id,
         seed_species=seed_species,
@@ -45,18 +19,21 @@ def build_comparative_locus(
     )
 
     for proj in projections:
-
-        loci = find_overlapping_loci(
+        loci = find_overlapping_species_loci(
             proj,
             species_loci_dict.get(proj.species, [])
         )
 
         if not loci:
+            clocus.add_missing_projection(
+                proj.species,
+                f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}"
+            )
             continue
 
         best, alternatives = choose_best_locus(proj, loci)
 
-        if best:
+        if best is not None:
             clocus.set_primary(proj.species, best.locus_id)
 
         if alternatives:
