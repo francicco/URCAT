@@ -267,6 +267,92 @@ def merge_round_results(job, workdir, reference_species, merged_target_paths):
     return str(out_path)
 
 
+def schedule_target_batches(
+    job,
+    workdir,
+    annotation_dir,
+    annotation_suffix,
+    hal_path,
+    species_csv,
+    reference_species,
+    target_species,
+    manifest_path,
+):
+    manifest = read_json(manifest_path)
+
+    target_jobs = [j for j in manifest["jobs"] if j["target_species"] == target_species]
+
+    batch_rvs = []
+    for j in target_jobs:
+        batch_job = job.addChildJobFn(
+            run_project_batch,
+            workdir,
+            annotation_dir,
+            annotation_suffix,
+            hal_path,
+            species_csv,
+            reference_species,
+            target_species,
+            j["batch_file"],
+            j["batch_id"],
+            memory="4G",
+            disk="4G",
+        )
+        batch_rvs.append(batch_job.rv())
+
+    merge_job = job.addFollowOnJobFn(
+        merge_target_results,
+        workdir,
+        reference_species,
+        target_species,
+        batch_rvs,
+        memory="2G",
+        disk="2G",
+    )
+    return merge_job.rv()
+
+
+def schedule_round_from_manifest(
+    job,
+    workdir,
+    annotation_dir,
+    annotation_suffix,
+    hal_path,
+    species_csv,
+    reference_species,
+    manifest_path,
+):
+    species_list = get_species_list(species_csv)
+    targets = [sp for sp in species_list if sp != reference_species]
+
+    target_merge_rvs = []
+    for target in targets:
+        target_job = job.addChildJobFn(
+            schedule_target_batches,
+            workdir,
+            annotation_dir,
+            annotation_suffix,
+            hal_path,
+            species_csv,
+            reference_species,
+            target,
+            manifest_path,
+            memory="2G",
+            disk="2G",
+        )
+        target_merge_rvs.append(target_job.rv())
+
+    round_merge = job.addFollowOnJobFn(
+        merge_round_results,
+        workdir,
+        reference_species,
+        target_merge_rvs,
+        memory="2G",
+        disk="2G",
+    )
+    return round_merge.rv()
+
+
 def run_round_zero(
     job,
     workdir,
@@ -280,7 +366,7 @@ def run_round_zero(
     species_list = get_species_list(species_csv)
     targets = [sp for sp in species_list if sp != seed_species]
 
-    frontier_path = job.addChildJobFn(
+    frontier_job = job.addChildJobFn(
         write_seed_frontier,
         workdir,
         annotation_dir,
@@ -288,73 +374,33 @@ def run_round_zero(
         seed_species,
         memory="2G",
         disk="2G",
-    ).rv()
+    )
 
-    manifest_path = job.addFollowOnJobFn(
+    manifest_job = frontier_job.addFollowOnJobFn(
         write_manifest,
         workdir,
-        frontier_path,
+        frontier_job.rv(),
         seed_species,
         targets,
         batch_size,
         memory="2G",
         disk="2G",
-    ).rv()
+    )
 
-    manifest = job.fileStore.readGlobalFile if False else None
-    _ = manifest_path  # keeps structure simple; manifest file is on shared FS
-
-    frontier = read_json(Path(workdir) / "rounds" / "round_000" / f"ref_{seed_species}" / "frontier.json")
-    n_batches = math.ceil(len(frontier["transcript_ids"]) / batch_size) if frontier["transcript_ids"] else 0
-
-    merge_jobs = []
-    for target in targets:
-        batch_rvs = []
-        for batch_id in range(n_batches):
-            batch_ids_path = (
-                Path(workdir)
-                / "rounds"
-                / "round_000"
-                / f"ref_{seed_species}"
-                / f"target_{target}"
-                / f"batch_{batch_id:03d}.ids.json"
-            )
-            batch_job = job.addChildJobFn(
-                run_project_batch,
-                workdir,
-                annotation_dir,
-                annotation_suffix,
-                hal_path,
-                species_csv,
-                seed_species,
-                target,
-                str(batch_ids_path),
-                batch_id,
-                memory="4G",
-                disk="4G",
-            )
-            batch_rvs.append(batch_job.rv())
-
-        merge_job = job.addFollowOnJobFn(
-            merge_target_results,
-            workdir,
-            seed_species,
-            target,
-            batch_rvs,
-            memory="2G",
-            disk="2G",
-        )
-        merge_jobs.append(merge_job.rv())
-
-    round_merge = job.addFollowOnJobFn(
-        merge_round_results,
+    round_job = manifest_job.addFollowOnJobFn(
+        schedule_round_from_manifest,
         workdir,
+        annotation_dir,
+        annotation_suffix,
+        hal_path,
+        species_csv,
         seed_species,
-        merge_jobs,
+        manifest_job.rv(),
         memory="2G",
         disk="2G",
     )
-    return round_merge.rv()
+
+    return round_job.rv()
 
 
 def main():
