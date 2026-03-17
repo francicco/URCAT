@@ -1,9 +1,22 @@
+from comparative_annotator.models.transcript import CandidateTranscript
 from comparative_annotator.models.projected_transcript import ProjectedTranscript
 from comparative_annotator.models.locus import SpeciesLocus
 from comparative_annotator.projection.adjudication import choose_best_locus
 
 
 def test_choose_best_locus():
+    source = CandidateTranscript(
+        transcript_id="tx1",
+        species="Heliconius",
+        seqid="chr1",
+        start=100,
+        end=300,
+        strand="+",
+        source="test",
+        exons=[(100, 150), (200, 250)],
+        cds=[],
+    )
+    source.finalize()
 
     projected = ProjectedTranscript(
         species="Dryas",
@@ -11,8 +24,9 @@ def test_choose_best_locus():
         strand="+",
         source_species="Heliconius",
         source_transcript="tx1",
-        exons=[(1000,1050),(1100,1150)],
+        exons=[(1000, 1050), (1100, 1150)],
         coverage=1.0,
+        source_exon_indices=[0, 1],
     )
 
     good = SpeciesLocus(
@@ -35,7 +49,7 @@ def test_choose_best_locus():
         transcripts=["txB"],
     )
 
-    best, alternatives = choose_best_locus(projected, [good, bad])
+    best, alternatives = choose_best_locus(projected, source, [good, bad])
 
     assert best.locus_id == "good"
     assert len(alternatives) == 1
