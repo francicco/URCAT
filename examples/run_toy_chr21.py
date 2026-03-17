@@ -22,6 +22,12 @@ def main():
         "Diul": diul_loci,
     }
 
+    transcripts_by_species = {
+        "Hmel": hmel,
+        "Eisa": eisa,
+        "Diul": diul,
+    }
+
     seed = hmel["transcript:Hmel202001oG3.1"]
 
     hal = HALAdapter("data/3SpChr21.hal")
@@ -62,6 +68,7 @@ def main():
             target_species=target,
             hal_adapter=hal,
             species_loci=species_loci,
+            transcripts_by_species=transcripts_by_species,
         )
 
         print(f"=== {seed.transcript_id} -> {target} ===")
