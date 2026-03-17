@@ -1,78 +1,92 @@
 from __future__ import annotations
 
+from collections import Counter
+from typing import Iterable
+
 from comparative_annotator.models.locus import SpeciesLocus
-from comparative_annotator.models.transcript import CandidateTranscript
 
 
-def overlaps(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
-    return a_start <= b_end and b_start <= a_end
-
-
-def build_species_loci(
-    transcripts: list[CandidateTranscript],
-    species: str,
-) -> list[SpeciesLocus]:
+def infer_gene_id(transcript_ids):
     """
-    Build species-local loci by grouping overlapping transcripts
-    on the same seqid and strand.
+    Example:
+        transcript:Eisa.Eisa2100G1.1 -> Eisa.Eisa2100G1
+        transcript:Hmel202001oG3.1   -> Hmel202001oG3
     """
-
-    def infer_gene_id(transcript_ids):
-        # example transcript: "transcript:Eisa.Eisa2100G1.1"
-        # -> gene: "Eisa.Eisa2100G1"
-        tx = transcript_ids[0]
+    cleaned = []
+    for tx in transcript_ids:
         tx = tx.replace("transcript:", "")
-        return tx.rsplit(".", 1)[0]
+        if "." in tx:
+            tx = tx.rsplit(".", 1)[0]
+        cleaned.append(tx)
 
+    if not cleaned:
+        return None
+
+    counts = Counter(cleaned)
+    return counts.most_common(1)[0][0]
+
+
+def build_species_loci(transcripts: Iterable, species: str):
+    """
+    Group transcripts into species loci by genomic overlap on the same seqid/strand.
+    Locus IDs are derived from the underlying transcript/gene IDs when possible,
+    instead of synthetic labels like Eisa_locus_1.
+    """
     txs = sorted(
-        [tx for tx in transcripts if tx.species == species],
-        key=lambda x: (x.seqid, x.strand, x.start, x.end),
+        list(transcripts),
+        key=lambda t: (t.seqid, t.strand, min(e[0] for e in t.exons), max(e[1] for e in t.exons)),
     )
 
-    loci: list[SpeciesLocus] = []
-    current: SpeciesLocus | None = None
-    counter = 0
+    loci = []
+    current = []
+
+    def flush_current():
+        nonlocal current, loci
+        if not current:
+            return
+
+        seqid = current[0].seqid
+        strand = current[0].strand
+        start = min(min(e[0] for e in tx.exons) for tx in current)
+        end = max(max(e[1] for e in tx.exons) for tx in current)
+        transcript_ids = [tx.transcript_id for tx in current]
+
+        gene_id = infer_gene_id(transcript_ids)
+        if gene_id is None:
+            gene_id = f"{species}_locus_{len(loci) + 1}"
+
+        loci.append(
+            SpeciesLocus(
+                locus_id=gene_id,
+                species=species,
+                seqid=seqid,
+                start=start,
+                end=end,
+                strand=strand,
+                transcripts=transcript_ids,
+            )
+        )
+        current = []
 
     for tx in txs:
-        if current is None:
-            counter += 1
-            current = SpeciesLocus(
-                locus_id = infer_gene_id(locus.transcripts),
-                species=species,
-                seqid=tx.seqid,
-                start=tx.start,
-                end=tx.end,
-                strand=tx.strand,
-                transcripts=[tx.transcript_id],
-            )
-            tx.attributes["locus_id"] = current.locus_id
+        tx_start = min(e[0] for e in tx.exons)
+        tx_end = max(e[1] for e in tx.exons)
+
+        if not current:
+            current = [tx]
             continue
 
-        same_context = (
-            tx.seqid == current.seqid
-            and tx.strand == current.strand
-        )
+        cur_seqid = current[0].seqid
+        cur_strand = current[0].strand
+        cur_end = max(max(e[1] for e in t.exons) for t in current)
 
-        if same_context and overlaps(tx.start, tx.end, current.start, current.end):
-            current.transcripts.append(tx.transcript_id)
-            current.start = min(current.start, tx.start)
-            current.end = max(current.end, tx.end)
-            tx.attributes["locus_id"] = current.locus_id
+        same_block = (tx.seqid == cur_seqid) and (tx.strand == cur_strand) and (tx_start <= cur_end)
+
+        if same_block:
+            current.append(tx)
         else:
-            loci.append(current)
-            counter += 1
-            current = SpeciesLocus(
-                locus_id=f"{species}_locus_{counter}",
-                species=species,
-                seqid=tx.seqid,
-                start=tx.start,
-                end=tx.end,
-                strand=tx.strand,
-                transcripts=[tx.transcript_id],
-            )
-            tx.attributes["locus_id"] = current.locus_id
+            flush_current()
+            current = [tx]
 
-    if current is not None:
-        loci.append(current)
-
+    flush_current()
     return loci
