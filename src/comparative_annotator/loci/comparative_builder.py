@@ -31,19 +31,31 @@ def build_comparative_locus_from_projection(
     for proj in projected_transcripts:
         loci_for_species = species_loci.get(proj.species, [])
 
+        # Prefer same-strand overlaps, but do not exclude opposite-strand overlaps.
         same_strand_loci = find_overlapping_species_loci(proj, loci_for_species)
-        if same_strand_loci:
+        candidate_loci = same_strand_loci
+
+        if not candidate_loci:
+            any_strand_loci = find_overlapping_species_loci_any_strand(proj, loci_for_species)
+            candidate_loci = any_strand_loci
+
+            # record diagnostic strand conflicts, but still allow scoring/ranking
+            for locus in any_strand_loci:
+                if locus.strand != proj.strand:
+                    clocus.add_strand_conflict(proj.species, locus.locus_id)
+
+        if candidate_loci:
             best, alternatives = choose_best_locus(
                 projected=proj,
                 source_transcript=source_transcript,
-                loci=same_strand_loci,
+                loci=candidate_loci,
             )
 
             if best is not None:
                 clocus.set_primary(proj.species, best.locus_id)
 
                 tx_lookup = transcripts_by_species.get(proj.species, {})
-                best_locus_obj = next((l for l in same_strand_loci if l.locus_id == best.locus_id), None)
+                best_locus_obj = next((l for l in candidate_loci if l.locus_id == best.locus_id), None)
 
                 if best_locus_obj is not None and tx_lookup:
                     best_tx, alt_txs = choose_best_transcript_within_locus(
@@ -67,15 +79,8 @@ def build_comparative_locus_from_projection(
                     proj.species,
                     [a.locus_id for a in alternatives]
                 )
-            continue
 
-        any_strand_loci = find_overlapping_species_loci_any_strand(proj, loci_for_species)
-        if any_strand_loci:
-            for locus in any_strand_loci:
-                if locus.strand != proj.strand:
-                    clocus.add_strand_conflict(proj.species, locus.locus_id)
-            if proj.species in clocus.strand_conflicts:
-                continue
+            continue
 
         clocus.add_missing_projection(
             proj.species,
