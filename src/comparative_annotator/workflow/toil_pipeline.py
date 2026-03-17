@@ -375,7 +375,7 @@ def main():
 
     root = Job.wrapJobFn(
         run_round_zero,
-        options.workDir,
+        options.outputDir,
         options.annotationDir,
         options.annotationSuffix,
         options.halPath,
