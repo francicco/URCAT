@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 from toil.common import Toil
@@ -14,6 +13,7 @@ from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 
 
 def read_json(path):
+    path = Path(path)
     with open(path) as fh:
         return json.load(fh)
 
@@ -35,7 +35,7 @@ def get_species_list(species_csv: str):
 
 
 def load_transcripts_for_species(annotation_dir: str, annotation_suffix: str, species: str):
-    gff_path = Path(annotation_dir) / f"{species}{annotation_suffix}"
+    gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix}").resolve()
     return load_gff3(str(gff_path), species=species)
 
 
@@ -127,7 +127,7 @@ def run_project_batch(
 
     transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
-    hal = HALAdapter(hal_path)
+    hal = HALAdapter(str(Path(hal_path).resolve()))
 
     batch_info = read_json(batch_ids_path)
     transcript_ids = batch_info["transcript_ids"]
@@ -279,7 +279,6 @@ def schedule_target_batches(
     manifest_path,
 ):
     manifest = read_json(manifest_path)
-
     target_jobs = [j for j in manifest["jobs"] if j["target_species"] == target_species]
 
     batch_rvs = []
@@ -419,12 +418,16 @@ def main():
 
     options = parser.parse_args()
 
+    output_dir = str(Path(options.outputDir).resolve())
+    annotation_dir = str(Path(options.annotationDir).resolve())
+    hal_path = str(Path(options.halPath).resolve())
+
     root = Job.wrapJobFn(
         run_round_zero,
-        options.outputDir,
-        options.annotationDir,
+        output_dir,
+        annotation_dir,
         options.annotationSuffix,
-        options.halPath,
+        hal_path,
         options.speciesCsv,
         options.seedSpecies,
         options.batchSize,
