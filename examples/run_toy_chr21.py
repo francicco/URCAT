@@ -6,6 +6,7 @@ from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 from comparative_annotator.projection.matching import nearest_species_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
 
+from comparative_annotator.projection.reporting import rank_candidate_loci_with_transcripts
 
 def main():
     hmel = load_gff3("data/Hmel202001o.test.gff3", species="Hmel")
