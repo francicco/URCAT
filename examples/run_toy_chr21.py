@@ -89,6 +89,8 @@ def main():
                 for i, row in enumerate(candidate_rows, start=1):
                     print(
                         f"  {i}. {row['locus_id']} "
+                        f"relation={row['relation']} "
+                        f"distance={row['distance']} "
                         f"locus_score={row['locus_score']:.3f} "
                         f"overlap={row['overlap_fraction']:.3f} "
                         f"proj_score={row['projection_score']:.3f} "
