@@ -247,65 +247,65 @@ def run_project_batch(
 
     results = []
     batch_info = read_json(batch_ids_path)
-items = batch_info["items"]
+    items = batch_info["items"]
 
-results = []
+    results = []
 
-for item in items:
+    for item in items:
 
-    try:
-        if item["kind"] == "native_transcript":
-            seed = transcripts_by_species[reference_species][item["transcript_id"]]
+        try:
+            if item["kind"] == "native_transcript":
+                seed = transcripts_by_species[reference_species][item["transcript_id"]]
 
-        elif item["kind"] == "urcat_consensus":
-            seed = build_consensus_seed(item)
+            elif item["kind"] == "urcat_consensus":
+                seed = build_consensus_seed(item)
 
-        elif item["kind"] == "orphan_native_locus":
-            tx_id = item["transcripts"][0]
-            seed = transcripts_by_species[reference_species][tx_id]
+            elif item["kind"] == "orphan_native_locus":
+                tx_id = item["transcripts"][0]
+                seed = transcripts_by_species[reference_species][tx_id]
 
-        else:
-            raise ValueError(f"Unknown seed kind: {item['kind']}")
+            else:
+                raise ValueError(f"Unknown seed kind: {item['kind']}")
 
-        clocus = infer_comparative_locus(
-            seed_transcript=seed,
-            target_species=target_species,
-            hal_adapter=hal,
-            species_loci=species_loci,
-            transcripts_by_species=transcripts_by_species,
-        )
+            clocus = infer_comparative_locus(
+                seed_transcript=seed,
+                target_species=target_species,
+                hal_adapter=hal,
+                species_loci=species_loci,
+                transcripts_by_species=transcripts_by_species,
+            )
 
-        result = {
-            "status": "ok",
-            "primary": clocus.primary,
-            "alternatives": clocus.alternatives,
-            "missing_annotations": clocus.missing_annotations,
+            result = {
+                "status": "ok",
+                "primary": clocus.primary,
+                "alternatives": clocus.alternatives,
+                "missing_annotations": clocus.missing_annotations,
+            }
+
+        except Exception as e:
+            result = {"status": "error", "error": str(e)}
+
+        results.append(result)
+
+        out = {
+            "round_id": 0,
+            "reference_species": reference_species,
+            "target_species": target_species,
+            "batch_id": batch_id,
+            "n_transcripts": len(transcript_ids),
+            "results": results,
         }
 
-    except Exception as e:
-        result = {"status": "error", "error": str(e)}
-
-    results.append(result)
-
-    out = {
-        "round_id": 0,
-        "reference_species": reference_species,
-        "target_species": target_species,
-        "batch_id": batch_id,
-        "n_transcripts": len(transcript_ids),
-        "results": results,
-    }
-
-    out_path = (
-        Path(workdir)
-        / "rounds"
-        / "round_000"
-        / f"ref_{reference_species}"
-        / f"target_{target_species}"
-        / f"batch_{batch_id:03d}.json"
-    )
-    write_json(out_path, out)
-    return str(out_path)
+        out_path = (
+            Path(workdir)
+            / "rounds"
+            / "round_000"
+            / f"ref_{reference_species}"
+            / f"target_{target_species}"
+            / f"batch_{batch_id:03d}.json"
+        )
+        write_json(out_path, out)
+        return str(out_path)
 
 
 def merge_target_results(job, workdir, reference_species, target_species, batch_result_paths):
