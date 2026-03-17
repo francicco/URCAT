@@ -25,3 +25,8 @@ class ComparativeLocus:
     @property
     def species_count(self) -> int:
         return len(self.primary)
+
+strand_conflicts: dict[str, list[str]] = field(default_factory=dict)
+
+def add_strand_conflict(self, species: str, locus_id: str) -> None:
+    self.strand_conflicts.setdefault(species, []).append(locus_id)
