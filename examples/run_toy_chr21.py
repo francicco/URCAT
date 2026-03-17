@@ -159,14 +159,19 @@ def main():
         print("=========================================\n")
 
     # write merged Eisa annotation at the end
-    write_merged_gff3(
-        output_path="Eisa_merged_urcat.gff3",
+    urcat_consensus_by_species = {
+        "Eisa": eisa_consensus,
+        "Hmel": [],
+        "Diul": [],
+    }
+
+    write_full_merged_gff3(
+        output_path="all_species_merged_urcat.gff3",
         original_transcripts_by_species=transcripts_by_species,
-        species="Eisa",
-        urcat_consensus_loci=eisa_consensus,
+        urcat_consensus_by_species=urcat_consensus_by_species,
     )
 
-    print("Wrote merged annotation to Eisa_merged_urcat.gff3")
+    print("Wrote merged annotation to all_species_merged_urcat.gff3")
 
 
 if __name__ == "__main__":
