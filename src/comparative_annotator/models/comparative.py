@@ -10,15 +10,25 @@ class ComparativeLocus:
     seed_transcript: str
 
     primary: dict[str, str] = field(default_factory=dict)
+    primary_transcripts: dict[str, str] = field(default_factory=dict)
+
     alternatives: dict[str, list[str]] = field(default_factory=dict)
+    alternative_transcripts: dict[str, list[str]] = field(default_factory=dict)
+
     missing_annotations: dict[str, list[str]] = field(default_factory=dict)
     strand_conflicts: dict[str, list[str]] = field(default_factory=dict)
 
     def set_primary(self, species: str, locus_id: str) -> None:
         self.primary[species] = locus_id
 
+    def set_primary_transcript(self, species: str, transcript_id: str) -> None:
+        self.primary_transcripts[species] = transcript_id
+
     def set_alternatives(self, species: str, locus_ids: list[str]) -> None:
         self.alternatives[species] = locus_ids
+
+    def set_alternative_transcripts(self, species: str, transcript_ids: list[str]) -> None:
+        self.alternative_transcripts[species] = transcript_ids
 
     def add_missing_projection(self, species: str, projection_id: str) -> None:
         self.missing_annotations.setdefault(species, []).append(projection_id)
