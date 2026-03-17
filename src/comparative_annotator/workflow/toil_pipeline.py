@@ -25,6 +25,13 @@ from comparative_annotator.workflow.progressive import (
     pick_next_reference_from_order,
 )
 
+@dataclass
+class FrontierSeedTranscript:
+    transcript_id: str
+    species: str
+    seqid: str
+    strand: str
+    exons: list
 
 def read_json(path):
     path = Path(path)
@@ -148,14 +155,13 @@ def collect_projected_transcript_spans_for_species(
 
 
 def build_consensus_seed(item):
-    return Transcript(
+    return FrontierSeedTranscript(
         transcript_id=f"URCAT_CONSENSUS:{item['species']}:{item['seqid']}:{item['start']}-{item['end']}",
         species=item["species"],
         seqid=item["seqid"],
         strand=item["strand"],
         exons=item["exons"],
     )
-
 
 def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_species):
     tx = load_transcripts_for_species(annotation_dir, annotation_suffix, seed_species)
