@@ -37,7 +37,7 @@ def build_species_loci(
         if current is None:
             counter += 1
             current = SpeciesLocus(
-                locus_id = infer_gene_id(locus.transcripts)
+                locus_id = infer_gene_id(locus.transcripts),
                 species=species,
                 seqid=tx.seqid,
                 start=tx.start,
