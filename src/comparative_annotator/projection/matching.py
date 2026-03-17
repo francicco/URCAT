@@ -138,3 +138,79 @@ def nearest_species_locus(projected, species_loci, same_strand_only=False):
             best_locus = locus
 
     return best_locus, best_distance
+
+def projected_span(projected):
+    return projected.start, projected.end
+
+
+def locus_relation_to_projection(projected, locus):
+    """
+    Classify locus position relative to projected span on the same seqid.
+    Returns one of: overlap, upstream, downstream
+    """
+    p_start, p_end = projected_span(projected)
+
+    if locus.end < p_start:
+        return "upstream"
+    if locus.start > p_end:
+        return "downstream"
+    return "overlap"
+
+
+def locus_distance_to_projection(projected, locus):
+    p_start, p_end = projected_span(projected)
+
+    if locus.end < p_start:
+        return p_start - locus.end
+    if locus.start > p_end:
+        return locus.start - p_end
+    return 0
+
+
+def find_flanking_species_loci(projected, species_loci, n_flank=2):
+    """
+    Return up to n_flank upstream and n_flank downstream loci
+    on the same seqid, ordered by proximity.
+    """
+    same_seqid = [l for l in species_loci if l.seqid == projected.seqid]
+
+    upstream = []
+    downstream = []
+
+    for locus in same_seqid:
+        relation = locus_relation_to_projection(projected, locus)
+        dist = locus_distance_to_projection(projected, locus)
+
+        if relation == "upstream":
+            upstream.append((dist, locus))
+        elif relation == "downstream":
+            downstream.append((dist, locus))
+
+    upstream.sort(key=lambda x: x[0])
+    downstream.sort(key=lambda x: x[0])
+
+    return [l for _, l in upstream[:n_flank]], [l for _, l in downstream[:n_flank]]
+
+
+def find_candidate_species_loci(projected, species_loci, n_flank=2):
+    """
+    Candidate set for ranking:
+    - all overlapping loci
+    - nearest upstream loci
+    - nearest downstream loci
+    Deduplicated by locus_id.
+    """
+    overlapping = find_overlapping_species_loci_any_strand(projected, species_loci)
+    upstream, downstream = find_flanking_species_loci(projected, species_loci, n_flank=n_flank)
+
+    ordered = overlapping + upstream + downstream
+
+    unique = []
+    seen = set()
+    for locus in ordered:
+        if locus.locus_id in seen:
+            continue
+        seen.add(locus.locus_id)
+        unique.append(locus)
+
+    return unique
