@@ -24,6 +24,7 @@ from comparative_annotator.workflow.progressive import (
     pick_next_reference_from_order,
 )
 
+from comparative_annotator.models.transcript import Transcript
 
 def read_json(path):
     path = Path(path)
@@ -159,47 +160,65 @@ def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_sp
     return str(path)
 
 
-def write_manifest(job, workdir, frontier_path, reference_species, target_species_list, batch_size):
+def write_manifest(
+    job,
+    workdir,
+    frontier_path,
+    reference_species,
+    target_species_list,
+    batch_size,
+):
     frontier = read_json(frontier_path)
-    transcript_ids = frontier["transcript_ids"]
-    batches = list(chunked(transcript_ids, batch_size))
+
+    if frontier["frontier_kind"] == "seed_all_transcripts":
+        items = [{"kind": "native_transcript", "transcript_id": tid}
+                 for tid in frontier["transcript_ids"]]
+
+    elif frontier["frontier_kind"] == "mixed_pending":
+        items = frontier["items"]
+
+    else:
+        raise ValueError("Unknown frontier kind")
+
+    batches = list(chunked(items, batch_size))
 
     jobs = []
     for target in target_species_list:
-        for batch_id, batch_ids in enumerate(batches):
+        for batch_id, batch_items in enumerate(batches):
             batch_file = (
                 Path(workdir)
                 / "rounds"
-                / "round_000"
+                / f"round_{frontier['round_id']:03d}"
                 / f"ref_{reference_species}"
                 / f"target_{target}"
-                / f"batch_{batch_id:03d}.ids.json"
+                / f"batch_{batch_id:03d}.json"
             )
-            write_json(batch_file, {"transcript_ids": batch_ids})
+            write_json(batch_file, {"items": batch_items})
+
             jobs.append(
                 {
                     "target_species": target,
                     "batch_id": batch_id,
                     "batch_file": str(batch_file),
-                    "n_transcripts": len(batch_ids),
+                    "n_items": len(batch_items),
                 }
             )
 
     manifest = {
-        "round_id": 0,
+        "round_id": frontier["round_id"],
         "reference_species": reference_species,
         "batch_size": batch_size,
-        "n_frontier_transcripts": len(transcript_ids),
         "jobs": jobs,
     }
 
     manifest_path = (
         Path(workdir)
         / "rounds"
-        / "round_000"
+        / f"round_{frontier['round_id']:03d}"
         / f"ref_{reference_species}"
         / "manifest.json"
     )
+
     write_json(manifest_path, manifest)
     return str(manifest_path)
 
@@ -227,51 +246,46 @@ def run_project_batch(
     ref_transcripts = transcripts_by_species[reference_species]
 
     results = []
-    for tx_id in transcript_ids:
-        if tx_id not in ref_transcripts:
-            results.append(
-                {
-                    "source_species": reference_species,
-                    "source_transcript": tx_id,
-                    "target_species": target_species,
-                    "status": "source_transcript_not_found",
-                }
-            )
-            continue
+    batch_info = read_json(batch_ids_path)
+items = batch_info["items"]
 
-        seed_transcript = ref_transcripts[tx_id]
+results = []
 
-        try:
-            clocus = infer_comparative_locus(
-                seed_transcript=seed_transcript,
-                target_species=target_species,
-                hal_adapter=hal,
-                species_loci=species_loci,
-                transcripts_by_species=transcripts_by_species,
-            )
+for item in items:
 
-            result = {
-                "source_species": reference_species,
-                "source_transcript": tx_id,
-                "target_species": target_species,
-                "status": "ok",
-                "primary": clocus.primary,
-                "alternatives": clocus.alternatives,
-                "missing_annotations": clocus.missing_annotations,
-                "strand_conflicts": clocus.strand_conflicts,
-                "primary_transcripts": getattr(clocus, "primary_transcripts", {}),
-                "alternative_transcripts": getattr(clocus, "alternative_transcripts", {}),
-            }
-        except Exception as e:
-            result = {
-                "source_species": reference_species,
-                "source_transcript": tx_id,
-                "target_species": target_species,
-                "status": "error",
-                "error": str(e),
-            }
+    try:
+        if item["kind"] == "native_transcript":
+            seed = transcripts_by_species[reference_species][item["transcript_id"]]
 
-        results.append(result)
+        elif item["kind"] == "urcat_consensus":
+            seed = build_consensus_seed(item)
+
+        elif item["kind"] == "orphan_native_locus":
+            tx_id = item["transcripts"][0]
+            seed = transcripts_by_species[reference_species][tx_id]
+
+        else:
+            raise ValueError(f"Unknown seed kind: {item['kind']}")
+
+        clocus = infer_comparative_locus(
+            seed_transcript=seed,
+            target_species=target_species,
+            hal_adapter=hal,
+            species_loci=species_loci,
+            transcripts_by_species=transcripts_by_species,
+        )
+
+        result = {
+            "status": "ok",
+            "primary": clocus.primary,
+            "alternatives": clocus.alternatives,
+            "missing_annotations": clocus.missing_annotations,
+        }
+
+    except Exception as e:
+        result = {"status": "error", "error": str(e)}
+
+    results.append(result)
 
     out = {
         "round_id": 0,
@@ -649,6 +663,48 @@ def schedule_round_from_manifest(
 
     return decision_job.rv()
 
+    def schedule_next_round(job, decision_path, workdir, annotation_dir,
+                        annotation_suffix, hal_path, species_csv, batch_size):
+
+    decision = read_json(decision_path)
+
+    if decision["stop"]:
+        return decision_path
+
+    next_ref = decision["next_reference_species"]
+    round_id = decision["reference_order"].index(next_ref)
+
+    frontier_job = job.addChildJobFn(
+        write_species_frontier_from_pending,
+        workdir,
+        decision["pending_frontiers_by_species"],
+        next_ref,
+        round_id,
+    )
+
+    manifest_job = frontier_job.addFollowOnJobFn(
+        write_manifest,
+        workdir,
+        frontier_job.rv(),
+        next_ref,
+        [sp for sp in get_species_list(species_csv) if sp != next_ref],
+        batch_size,
+    )
+
+    next_round = manifest_job.addFollowOnJobFn(
+        schedule_round_from_manifest,
+        workdir,
+        annotation_dir,
+        annotation_suffix,
+        hal_path,
+        species_csv,
+        next_ref,
+        manifest_job.rv(),
+        decision["used_reference_species"],
+    )
+
+    return next_round.rv()
+
 
 def run_round_zero(
     job,
@@ -700,6 +756,83 @@ def run_round_zero(
 
     return round_job.rv()
 
+def build_consensus_seed(item):
+    return Transcript(
+        transcript_id="URCAT_CONSENSUS",
+        species=item["species"],
+        seqid=item["seqid"],
+        strand=item["strand"],
+        exons=item["exons"],
+    )
+
+def write_species_frontier_from_pending(
+    job,
+    workdir,
+    pending_frontiers_by_species,
+    reference_species,
+    round_id,
+):
+    pending = pending_frontiers_by_species.get(reference_species, [])
+
+    frontier = {
+        "round_id": round_id,
+        "reference_species": reference_species,
+        "frontier_kind": "mixed_pending",
+        "items": pending,
+    }
+
+    path = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{reference_species}"
+        / "frontier.json"
+    )
+
+    write_json(path, frontier)
+    return str(path)
+
+def schedule_next_round(job, decision_path, workdir, annotation_dir,
+                        annotation_suffix, hal_path, species_csv, batch_size):
+
+    decision = read_json(decision_path)
+
+    if decision["stop"]:
+        return decision_path
+
+    next_ref = decision["next_reference_species"]
+    round_id = decision["reference_order"].index(next_ref)
+
+    frontier_job = job.addChildJobFn(
+        write_species_frontier_from_pending,
+        workdir,
+        decision["pending_frontiers_by_species"],
+        next_ref,
+        round_id,
+    )
+
+    manifest_job = frontier_job.addFollowOnJobFn(
+        write_manifest,
+        workdir,
+        frontier_job.rv(),
+        next_ref,
+        [sp for sp in get_species_list(species_csv) if sp != next_ref],
+        batch_size,
+    )
+
+    next_round = manifest_job.addFollowOnJobFn(
+        schedule_round_from_manifest,
+        workdir,
+        annotation_dir,
+        annotation_suffix,
+        hal_path,
+        species_csv,
+        next_ref,
+        manifest_job.rv(),
+        decision["used_reference_species"],
+    )
+
+    return next_round.rv()
 
 def main():
     from argparse import ArgumentParser
