@@ -24,9 +24,6 @@ def merge_projection_blocks(
     - merge all blocks that belong to the same species / seqid / strand / source transcript
     - do not impose a max gap threshold
     - preserve only the outer span
-
-    This is deliberately permissive. Later versions can add
-    stricter fragmentation logic or CESAR-like refinement.
     """
     if not intervals:
         return []
@@ -67,6 +64,22 @@ def merge_projection_blocks(
     return merged
 
 
+def block_midpoint(interval: ProjectionInterval) -> float:
+    return (interval.start + interval.end) / 2.0
+
+
+def chain_score(items: list[IndexedProjection], orientation: str) -> float:
+    """
+    Simple chain score:
+    - reward number of unique source exons recovered
+    - mildly penalize fragmentation
+    """
+    recovered = len(set(x.source_exon_index for x in items))
+    fragmentation_penalty = 0.05 * max(0, len(items) - recovered)
+    orientation_bonus = 0.01  # tiny constant so score is always numeric
+    return recovered - fragmentation_penalty + orientation_bonus
+
+
 def reconstruct_projected_transcripts(
     source_transcript,
     projected_exon_blocks: list[list[ProjectionInterval]],
@@ -74,18 +87,11 @@ def reconstruct_projected_transcripts(
     """
     Reconstruct projected transcript candidates from exon-wise projections.
 
-    Parameters
-    ----------
-    source_transcript
-        A CandidateTranscript-like object with transcript_id, species, strand, exons.
-    projected_exon_blocks
-        A list with one entry per source exon.
-        Each entry is a list of ProjectionInterval objects produced by projecting that exon.
-
-    Returns
-    -------
-    list[ProjectedTranscript]
-        One or more projected transcript candidates.
+    New behavior:
+    - merge fragmented blocks per source exon
+    - group by target seqid and strand
+    - allow both forward and reverse co-linear chains
+    - score the resulting chains
     """
     indexed: list[IndexedProjection] = []
 
@@ -105,86 +111,105 @@ def reconstruct_projected_transcripts(
     reconstructed: list[ProjectedTranscript] = []
 
     for (seqid, strand), items in by_target.items():
-        items.sort(key=lambda x: (x.interval.start, x.interval.end, x.source_exon_index))
+        forward_items = sorted(items, key=lambda x: (block_midpoint(x.interval), x.source_exon_index))
+        reverse_items = sorted(items, key=lambda x: (-block_midpoint(x.interval), x.source_exon_index))
 
-        chains = _split_into_compatible_chains(
-            items,
+        forward_chain = _build_colinear_chain(
+            forward_items,
             source_species=source_transcript.species,
             source_transcript_id=source_transcript.transcript_id,
             target_species=items[0].interval.species,
             seqid=seqid,
             strand=strand,
+            orientation="forward",
         )
 
-        reconstructed.extend(chains)
+        reverse_chain = _build_colinear_chain(
+            reverse_items,
+            source_species=source_transcript.species,
+            source_transcript_id=source_transcript.transcript_id,
+            target_species=items[0].interval.species,
+            seqid=seqid,
+            strand=strand,
+            orientation="reverse",
+        )
 
+        candidates = [c for c in [forward_chain, reverse_chain] if c is not None]
+
+        # deduplicate identical exon chains
+        unique: dict[tuple, ProjectedTranscript] = {}
+        for c in candidates:
+            key = (c.seqid, c.strand, tuple(c.exons))
+            if key not in unique or (c.chain_score or 0) > (unique[key].chain_score or 0):
+                unique[key] = c
+
+        reconstructed.extend(unique.values())
+
+    # rank by score descending
+    reconstructed.sort(key=lambda x: (x.chain_score or 0), reverse=True)
     return reconstructed
 
 
-def _split_into_compatible_chains(
+def _build_colinear_chain(
     items: list[IndexedProjection],
     source_species: str,
     source_transcript_id: str,
     target_species: str,
     seqid: str,
     strand: str,
-) -> list[ProjectedTranscript]:
+    orientation: str,
+) -> ProjectedTranscript | None:
     """
-    Split projected exon blocks into one or more compatible chains.
+    Build one co-linear chain assuming target coordinates are already ordered
+    in either forward or reverse genomic direction.
 
-    Version 1 logic:
-    - source exon indices should not go backwards within a chain
-    - genomic coordinates should move forward
-    - no explicit max genomic gap threshold is imposed
+    Requirement:
+    - source exon indices must increase monotonically
     """
     if not items:
-        return []
+        return None
 
-    chains: list[list[IndexedProjection]] = []
-    current_chain: list[IndexedProjection] = [items[0]]
+    selected: list[IndexedProjection] = []
+    seen_exons: set[int] = set()
+    last_exon_idx = -1
 
-    last_exon_idx = items[0].source_exon_index
-    last_start = items[0].interval.start
-
-    for item in items[1:]:
+    for item in items:
         exon_idx = item.source_exon_index
-        start = item.interval.start
 
-        same_or_forward_source_order = exon_idx >= last_exon_idx
-        forward_genomic_order = start >= last_start
+        if exon_idx < last_exon_idx:
+            continue
 
-        if same_or_forward_source_order and forward_genomic_order:
-            current_chain.append(item)
-        else:
-            chains.append(current_chain)
-            current_chain = [item]
+        # keep only first compatible projection per source exon in this simple version
+        if exon_idx in seen_exons:
+            continue
 
+        selected.append(item)
+        seen_exons.add(exon_idx)
         last_exon_idx = exon_idx
-        last_start = start
 
-    if current_chain:
-        chains.append(current_chain)
+    if not selected:
+        return None
 
-    output: list[ProjectedTranscript] = []
+    pt = ProjectedTranscript(
+        species=target_species,
+        seqid=seqid,
+        strand=strand,
+        source_species=source_species,
+        source_transcript=source_transcript_id,
+    )
 
-    for chain in chains:
-        pt = ProjectedTranscript(
-            species=target_species,
-            seqid=seqid,
-            strand=strand,
-            source_species=source_species,
-            source_transcript=source_transcript_id,
+    for item in selected:
+        pt.add_exon(
+            item.interval.start,
+            item.interval.end,
+            source_exon_index=item.source_exon_index,
         )
 
-        recovered_source_exons = []
+    # Sort exons in genomic order for storage/printing
+    pt.exons.sort()
+    pt.coverage = len(set(pt.source_exon_indices))
+    pt.chain_orientation = orientation
+    pt.fragmentation_count = len(items) - len(set(x.source_exon_index for x in items))
+    pt.chain_score = chain_score(selected, orientation=orientation)
 
-        for item in chain:
-            pt.add_exon(item.interval.start, item.interval.end)
-            recovered_source_exons.append(item.source_exon_index)
-
-        pt.exons.sort()
-        pt.coverage = len(set(recovered_source_exons))
-
-        output.append(pt)
-
-    return output
+    return pt
