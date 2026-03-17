@@ -17,9 +17,16 @@ class ProjectedTranscript:
     identity: float | None = None
     coverage: float | None = None
 
-    def add_exon(self, start: int, end: int) -> None:
+    # new fields
+    source_exon_indices: list[int] = field(default_factory=list)
+    chain_orientation: str | None = None   # "forward" or "reverse"
+    fragmentation_count: int = 0
+    chain_score: float | None = None
+
+    def add_exon(self, start: int, end: int, source_exon_index: int | None = None) -> None:
         self.exons.append((start, end))
-        self.exons.sort()
+        if source_exon_index is not None:
+            self.source_exon_indices.append(source_exon_index)
 
     @property
     def start(self) -> int:
