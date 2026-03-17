@@ -7,6 +7,7 @@ from pathlib import Path
 from toil.common import Toil
 from toil.job import Job
 
+from dataclasses import dataclass
 from comparative_annotator.io.gff3 import load_gff3
 from comparative_annotator.io.hal import HALAdapter
 from comparative_annotator.loci.species_loci import build_species_loci
