@@ -59,11 +59,11 @@ def locus_overlap_fraction(
     overlap_start = max(projected.start, locus.start)
     overlap_end = min(projected.end, locus.end)
 
-    overlap = max(0, overlap_end - overlap_start)
+    # inclusive coordinates
+    overlap = max(0, overlap_end - overlap_start + 1)
+    proj_len = projected.end - projected.start + 1
 
-    proj_len = projected.end - projected.start
-
-    if proj_len == 0:
+    if proj_len <= 0:
         return 0.0
 
     return overlap / proj_len
