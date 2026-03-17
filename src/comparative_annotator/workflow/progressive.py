@@ -18,20 +18,6 @@ def write_json(path, obj):
         json.dump(obj, fh, indent=2, sort_keys=True)
 
 
-def parse_newick_leaf_names(newick: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9_.:-]+|[(),;]", newick)
-    leaves = []
-    prev = None
-    for tok in tokens:
-        if tok in {",", "(", ")", ";"}:
-            prev = tok
-            continue
-        if prev in {"(", ",", None}:
-            leaves.append(tok.split(":")[0])
-        prev = tok
-    return leaves
-
-
 class TreeNode:
     def __init__(self, name=None):
         self.name = name
@@ -41,6 +27,15 @@ class TreeNode:
     def add_child(self, child):
         child.parent = self
         self.children.append(child)
+
+
+def collect_leaves(node: TreeNode) -> list[str]:
+    if node.name and not node.children:
+        return [node.name]
+    out = []
+    for child in node.children:
+        out.extend(collect_leaves(child))
+    return out
 
 
 def parse_newick_tree(newick: str) -> TreeNode:
@@ -80,56 +75,28 @@ def parse_newick_tree(newick: str) -> TreeNode:
     return root
 
 
-def build_undirected_graph(root: TreeNode):
+def build_leaf_graph(root: TreeNode):
     graph = defaultdict(set)
 
-    def visit(node):
-        for child in node.children:
-            if node.name and child.name:
-                graph[node.name].add(child.name)
-                graph[child.name].add(node.name)
-            visit(child)
-
-            if node.name and not child.name:
-                for leaf in collect_leaves(child):
-                    graph[node.name].add(leaf)
-                    graph[leaf].add(node.name)
-
-    def connect_internal(node):
-        child_leaves = [collect_leaves(c) for c in node.children]
-        flat = [x for sub in child_leaves for x in sub]
-        for i in range(len(flat)):
-            for j in range(i + 1, len(flat)):
-                if flat[j] not in graph[flat[i]]:
-                    pass
-
-    visit(root)
-
-    leaves = collect_leaves(root)
-    induced = defaultdict(set)
-
     def connect_subtree(node):
-        subleaves = collect_leaves(node)
-        for child in node.children:
-            child_leaves = collect_leaves(child)
-            other = [x for x in subleaves if x not in child_leaves]
-            for a in child_leaves:
-                for b in other:
-                    induced[a].add(b)
-                    induced[b].add(a)
-            connect_subtree(child)
+        if not node.children:
+            return collect_leaves(node)
+
+        child_leaf_sets = [connect_subtree(c) for c in node.children]
+        for i in range(len(child_leaf_sets)):
+            for j in range(i + 1, len(child_leaf_sets)):
+                for a in child_leaf_sets[i]:
+                    for b in child_leaf_sets[j]:
+                        graph[a].add(b)
+                        graph[b].add(a)
+
+        merged = []
+        for s in child_leaf_sets:
+            merged.extend(s)
+        return merged
 
     connect_subtree(root)
-    return induced
-
-
-def collect_leaves(node: TreeNode) -> list[str]:
-    if node.name and not node.children:
-        return [node.name]
-    out = []
-    for child in node.children:
-        out.extend(collect_leaves(child))
-    return out
+    return graph
 
 
 def shortest_path_distances(graph, start):
@@ -144,42 +111,29 @@ def shortest_path_distances(graph, start):
     return dist
 
 
-def choose_next_reference_species(
-    current_reference: str,
-    used_reference_species: set[str],
-    candidate_species_with_new_loci: set[str],
-    species_tree_newick: str,
-):
-    if not candidate_species_with_new_loci:
-        return None
-
+def compute_reference_order(seed_species: str, species_tree_newick: str, species_list: list[str]) -> list[str]:
     root = parse_newick_tree(species_tree_newick)
-    graph = build_undirected_graph(root)
-    dist = shortest_path_distances(graph, current_reference)
+    graph = build_leaf_graph(root)
+    dist = shortest_path_distances(graph, seed_species)
 
-    candidates = [
-        sp for sp in candidate_species_with_new_loci
-        if sp not in used_reference_species
-    ]
-    if not candidates:
-        return None
+    ordered = sorted(
+        [sp for sp in species_list if sp != seed_species],
+        key=lambda sp: (dist.get(sp, 10**9), sp),
+    )
+    return [seed_species] + ordered
 
-    candidates.sort(key=lambda sp: (dist.get(sp, 10**9), sp))
-    return candidates[0]
+
+def pick_next_reference_from_order(reference_order, used_reference_species, pending_frontiers_by_species):
+    used = set(used_reference_species)
+    for sp in reference_order:
+        if sp in used:
+            continue
+        if pending_frontiers_by_species.get(sp):
+            return sp
+    return None
 
 
 def extract_missing_locus_payloads(round_merged_json: dict):
-    """
-    Returns:
-      missing_by_target_species[target_species] = [
-          {
-              "source_species": ...,
-              "source_transcript": ...,
-              "target_species": ...,
-              "intervals": [...],
-          }, ...
-      ]
-    """
     missing_by_target_species = defaultdict(list)
 
     for target_block in round_merged_json["targets"]:
@@ -204,3 +158,16 @@ def extract_missing_locus_payloads(round_merged_json: dict):
             )
 
     return dict(missing_by_target_species)
+
+
+def interval_overlap(a_start, a_end, b_start, b_end):
+    return not (a_end < b_start or b_end < a_start)
+
+
+def locus_overlaps_any_interval(locus, intervals):
+    for iv in intervals:
+        if locus.seqid != iv["seqid"]:
+            continue
+        if interval_overlap(locus.start, locus.end, iv["start"], iv["end"]):
+            return True
+    return False
