@@ -164,14 +164,14 @@ def main():
         "Diul": [],
     }
 
-    write_full_merged_gff3(
-        output_path="all_species_merged_urcat.gff3",
-        original_transcripts_by_species=transcripts_by_species,
+    outputs = write_species_gff3_outputs(
+        output_dir="urcat_gff3_outputs",
+        transcripts_by_species=transcripts_by_species,
         urcat_consensus_by_species=urcat_consensus_by_species,
     )
 
-    print("Wrote merged annotation to all_species_merged_urcat.gff3")
-
+    for species, path in outputs.items():
+        print(f"Wrote {species} annotation to {path}")
 
 if __name__ == "__main__":
     main()
