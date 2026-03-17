@@ -544,6 +544,54 @@ def run_round_zero(
 
     return round_job.rv()
 
+def get_hal_tree_newick(hal_path: str) -> str:
+    import subprocess
+
+    result = subprocess.run(
+        ["halStats", hal_path],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.endswith(";") and "(" in line:
+            return line
+    raise RuntimeError("Could not extract species tree from halStats output")
+
+def extract_projected_spans_for_target(target_merged_json: dict):
+    spans = []
+
+    for r in target_merged_json["results"]:
+        if r.get("status") != "ok":
+            continue
+
+        target_species = r["target_species"]
+
+        for species_name, loci in r.get("missing_annotations", {}).items():
+            if species_name != target_species:
+                continue
+            for s in loci:
+                seqid, rest = s.split(":", 1)
+                coords, strand = rest.rsplit(":", 1)
+                start, end = coords.split("-")
+                spans.append(
+                    {
+                        "seqid": seqid,
+                        "start": int(start),
+                        "end": int(end),
+                        "strand": strand,
+                        "source_transcript": r["source_transcript"],
+                        "kind": "missing_projection_span",
+                    }
+                )
+
+        for species_name, locus_id in r.get("primary", {}).items():
+            if species_name != target_species:
+                continue
+            # primary IDs themselves are not coordinates, so nothing to add here
+
+    return spans
 
 def main():
     from argparse import ArgumentParser
