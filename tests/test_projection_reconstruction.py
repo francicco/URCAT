@@ -153,3 +153,64 @@ def test_reconstruct_handles_multiple_blocks_per_source_exon():
     assert len(chains) == 2
     seqids = sorted(c.seqid for c in chains)
     assert seqids == ["chr5", "chr9"]
+
+def test_reconstruct_reverse_colinear_chain():
+    tx = CandidateTranscript(
+        transcript_id="tx1",
+        species="Hmel",
+        seqid="chr1",
+        start=100,
+        end=400,
+        strand="+",
+        source="test",
+        exons=[(100, 150), (200, 250), (300, 350), (360, 390)],
+        cds=[],
+    )
+    tx.finalize()
+
+    # source exon order 0,1,2,3 but target coordinates go downward
+    projected_exon_blocks = [
+        [ProjectionInterval("Eisa", "Eisa2100", 1000, 1050, "+", "Hmel", "tx1")],
+        [ProjectionInterval("Eisa", "Eisa2100", 900, 950, "+", "Hmel", "tx1")],
+        [ProjectionInterval("Eisa", "Eisa2100", 800, 850, "+", "Hmel", "tx1")],
+        [ProjectionInterval("Eisa", "Eisa2100", 700, 750, "+", "Hmel", "tx1")],
+    ]
+
+    chains = reconstruct_projected_transcripts(tx, projected_exon_blocks)
+
+    assert len(chains) >= 1
+    best = chains[0]
+    assert best.coverage == 4
+    assert best.chain_orientation in {"forward", "reverse"}
+    assert best.exon_count == 4
+
+
+def test_reconstruct_prefers_multi_exon_chain():
+    tx = CandidateTranscript(
+        transcript_id="tx1",
+        species="Hmel",
+        seqid="chr1",
+        start=100,
+        end=300,
+        strand="+",
+        source="test",
+        exons=[(100, 150), (200, 250)],
+        cds=[],
+    )
+    tx.finalize()
+
+    projected_exon_blocks = [
+        [
+            ProjectionInterval("Eisa", "chrA", 1000, 1050, "+", "Hmel", "tx1"),
+            ProjectionInterval("Eisa", "chrB", 5000, 5050, "+", "Hmel", "tx1"),
+        ],
+        [
+            ProjectionInterval("Eisa", "chrA", 1100, 1150, "+", "Hmel", "tx1"),
+        ],
+    ]
+
+    chains = reconstruct_projected_transcripts(tx, projected_exon_blocks)
+
+    assert len(chains) >= 1
+    assert chains[0].coverage >= 1
+    assert chains[0].chain_score is not None
