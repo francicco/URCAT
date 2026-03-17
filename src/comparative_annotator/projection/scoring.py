@@ -10,40 +10,34 @@ from comparative_annotator.projection.matching import (
 
 
 def exon_count_similarity(projected: ProjectedTranscript, locus: SpeciesLocus) -> float:
-    """
-    Version 1: compare projected exon count to number of transcripts in locus only very loosely.
-    This is a placeholder until locus transcript structures are used directly.
-    """
     if projected.exon_count == 0:
         return 0.0
-
-    # For now, just reward existence of a locus
     return 1.0
 
 
 def exon_recovery_fraction(projected: ProjectedTranscript) -> float:
-    """
-    Version 1: use the stored coverage field if available.
-    Otherwise approximate as fully recovered.
-    """
     if projected.coverage is None:
-        return 1.0
-    return float(projected.coverage)
+        return 0.0
+    # normalize roughly by projected exon count
+    return float(projected.coverage) / max(1, projected.exon_count)
 
 
 def projection_coverage_score(projected: ProjectedTranscript) -> float:
+    if projected.chain_score is not None:
+        # compress chain score into something modest
+        return max(0.0, min(1.0, projected.chain_score / max(1, projected.exon_count)))
     if projected.coverage is None:
-        return 1.0
-    return float(projected.coverage)
+        return 0.0
+    return 1.0
 
 
 def score_projected_transcript_against_locus(
     projected: ProjectedTranscript,
     locus: SpeciesLocus,
     w_overlap: float = 0.5,
-    w_exon_similarity: float = 0.2,
+    w_exon_similarity: float = 0.15,
     w_exon_recovery: float = 0.2,
-    w_projection_coverage: float = 0.1,
+    w_projection_coverage: float = 0.15,
 ) -> ProjectionLocusScore:
     overlap = locus_overlap_fraction(projected, locus)
     exon_sim = exon_count_similarity(projected, locus)
