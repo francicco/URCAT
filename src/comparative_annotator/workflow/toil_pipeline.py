@@ -878,6 +878,7 @@ def schedule_round_from_manifest(
     reference_species,
     manifest_path,
     used_reference_species,
+    batch_size,
 ):
     manifest = read_json(manifest_path)
     round_id = manifest["round_id"]
@@ -943,7 +944,7 @@ def schedule_round_from_manifest(
         annotation_suffix,
         hal_path,
         species_csv,
-        200,  # replace with batch_size if you already pass it through
+        batch_size,
         memory="2G",
         disk="2G",
     )
