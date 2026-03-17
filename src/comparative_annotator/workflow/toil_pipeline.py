@@ -301,8 +301,21 @@ def annotate_missing_loci_and_choose_next(
     round_merged_path,
     used_reference_species,
 ):
+    from comparative_annotator.workflow.progressive import (
+        compute_reference_order,
+        extract_missing_locus_payloads,
+        pick_next_reference_from_order,
+        locus_overlaps_any_interval,
+    )
+    from comparative_annotator.missing.consensus import (
+        cluster_projected_transcripts,
+        choose_missing_locus_strand,
+        build_consensus_missing_transcript,
+    )
+
     species_list = get_species_list(species_csv)
     transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+    species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(hal_path).resolve()))
 
     round_merged = read_json(round_merged_path)
@@ -349,18 +362,92 @@ def annotate_missing_loci_and_choose_next(
         if consensuses:
             new_consensus_by_species[target_species] = consensuses
 
-    informative_species = set(new_consensus_by_species.keys())
-    tree_newick = get_hal_tree_newick(hal_path)
+    # Orphan detection
+    orphan_loci_by_species = {}
+    pending_frontiers_by_species = {}
 
-    next_reference = choose_next_reference_species(
-        current_reference=current_reference,
-        used_reference_species=set(used_reference_species),
-        candidate_species_with_new_loci=informative_species,
+    source_species_used_so_far = list(sorted(set(used_reference_species)))
+
+    for target_species in species_list:
+        native_loci = species_loci[target_species]
+        projected_spans = collect_projected_transcript_spans_for_species(
+            transcripts_by_species=transcripts_by_species,
+            source_species_list=source_species_used_so_far,
+            target_species=target_species,
+            hal=hal,
+        )
+
+        orphan_loci = []
+        for locus in native_loci:
+            if not locus_overlaps_any_interval(locus, projected_spans):
+                orphan_loci.append(
+                    {
+                        "locus_id": locus.locus_id,
+                        "species": locus.species,
+                        "seqid": locus.seqid,
+                        "start": locus.start,
+                        "end": locus.end,
+                        "strand": locus.strand,
+                        "transcripts": locus.transcripts,
+                    }
+                )
+
+        orphan_loci_by_species[target_species] = orphan_loci
+
+    # Pending frontiers combine:
+    # 1) URCAT new consensuses
+    # 2) orphan native loci
+    for sp in species_list:
+        pending = []
+
+        for c in new_consensus_by_species.get(sp, []):
+            pending.append(
+                {
+                    "kind": "urcat_consensus",
+                    "species": c.species,
+                    "seqid": c.seqid,
+                    "start": min(e[0] for e in c.exons),
+                    "end": max(e[1] for e in c.exons),
+                    "strand": c.strand,
+                    "support_count": c.support_count,
+                    "total_chain_score": c.total_chain_score,
+                    "mean_exon_recovery": c.mean_exon_recovery,
+                    "source_transcripts": c.source_transcripts,
+                    "exons": c.exons,
+                }
+            )
+
+        for o in orphan_loci_by_species.get(sp, []):
+            pending.append(
+                {
+                    "kind": "orphan_native_locus",
+                    **o,
+                }
+            )
+
+        if pending:
+            pending_frontiers_by_species[sp] = pending
+
+    tree_newick = get_hal_tree_newick(hal_path)
+    reference_order = compute_reference_order(
+        seed_species=used_reference_species[0],
         species_tree_newick=tree_newick,
+        species_list=species_list,
+    )
+
+    updated_used = sorted(set(used_reference_species) | {current_reference})
+
+    next_reference = pick_next_reference_from_order(
+        reference_order=reference_order,
+        used_reference_species=updated_used,
+        pending_frontiers_by_species=pending_frontiers_by_species,
     )
 
     out = {
+        "seed_species": used_reference_species[0],
         "current_reference": current_reference,
+        "reference_order": reference_order,
+        "used_reference_species": updated_used,
         "new_consensus_by_species": {
             sp: [
                 {
@@ -377,7 +464,8 @@ def annotate_missing_loci_and_choose_next(
             ]
             for sp, cs in new_consensus_by_species.items()
         },
-        "used_reference_species": sorted(set(used_reference_species) | {current_reference}),
+        "orphan_loci_by_species": orphan_loci_by_species,
+        "pending_frontiers_by_species": pending_frontiers_by_species,
         "next_reference_species": next_reference,
         "stop": next_reference is None,
     }
