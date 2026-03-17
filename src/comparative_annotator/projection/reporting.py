@@ -55,6 +55,8 @@ def rank_candidate_loci_with_transcripts(
                 "best_transcript_id": None if best_tx is None else best_tx.transcript_id,
                 "best_transcript_score": None if best_tx is None else best_tx.total_score,
                 "transcript_scores": transcript_scores,
+                "relation": locus_relation_to_projection(projected, locus),
+                "distance": locus_distance_to_projection(projected, locus),
             }
         )
 
