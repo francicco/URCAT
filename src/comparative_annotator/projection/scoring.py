@@ -1,63 +1,141 @@
-from __future__ import annotations
-
-from comparative_annotator.models.projected_transcript import ProjectedTranscript
-from comparative_annotator.models.locus import SpeciesLocus
-from comparative_annotator.models.scoring import ProjectionLocusScore
-from comparative_annotator.projection.matching import (
-    locus_overlap_fraction,
-    projected_transcript_id,
-)
+from dataclasses import dataclass
+from typing import Optional
 
 
-def exon_count_similarity(projected: ProjectedTranscript, locus: SpeciesLocus) -> float:
-    if projected.exon_count == 0:
+@dataclass
+class ProjectionScore:
+    species: str
+    projected_id: str
+
+    exon_recovery: float
+    chain_completeness: float
+    compactness: float
+    orientation_consistency: float
+    fragmentation_penalty: float
+
+    projection_score: float
+
+
+@dataclass
+class ProjectionLocusScore(ProjectionScore):
+    locus_id: Optional[str]
+    overlap_fraction: float
+
+    total_score: float
+
+
+# -------------------------
+# Feature computations
+# -------------------------
+
+def exon_recovery(projected, source_transcript) -> float:
+    if not source_transcript.exons:
         return 0.0
-    return 1.0
+    recovered = len(projected.source_exon_indices or [])
+    return recovered / len(source_transcript.exons)
 
 
-def exon_recovery_fraction(projected: ProjectedTranscript) -> float:
-    if projected.coverage is None:
+def chain_completeness(projected, source_transcript) -> float:
+    idx = sorted(projected.source_exon_indices or [])
+    if len(idx) <= 1:
         return 0.0
-    # normalize roughly by projected exon count
-    return float(projected.coverage) / max(1, projected.exon_count)
 
-
-def projection_coverage_score(projected: ProjectedTranscript) -> float:
-    if projected.chain_score is not None:
-        # compress chain score into something modest
-        return max(0.0, min(1.0, projected.chain_score / max(1, projected.exon_count)))
-    if projected.coverage is None:
+    adjacent = sum(1 for i in range(len(idx) - 1) if idx[i + 1] == idx[i] + 1)
+    max_adjacent = len(source_transcript.exons) - 1
+    if max_adjacent <= 0:
         return 0.0
-    return 1.0
+
+    return adjacent / max_adjacent
 
 
-def score_projected_transcript_against_locus(
-    projected: ProjectedTranscript,
-    locus: SpeciesLocus,
-    w_overlap: float = 0.5,
-    w_exon_similarity: float = 0.15,
-    w_exon_recovery: float = 0.2,
-    w_projection_coverage: float = 0.15,
-) -> ProjectionLocusScore:
+def compactness(projected, source_transcript) -> float:
+    if not projected.exons or not source_transcript.exons:
+        return 0.0
+
+    proj_start = min(s for s, e in projected.exons)
+    proj_end = max(e for s, e in projected.exons)
+    proj_span = proj_end - proj_start + 1
+
+    src_start = min(s for s, e in source_transcript.exons)
+    src_end = max(e for s, e in source_transcript.exons)
+    src_span = src_end - src_start + 1
+
+    if proj_span == 0 or src_span == 0:
+        return 0.0
+
+    return min(proj_span, src_span) / max(proj_span, src_span)
+
+
+def orientation_consistency(projected) -> float:
+    # do NOT penalize strongly
+    return 1.0 if projected.chain_orientation == "forward" else 0.7
+
+
+def fragmentation_penalty(projected, source_transcript) -> float:
+    if not source_transcript.exons:
+        return 0.0
+    return min(1.0, projected.fragmentation_count / len(source_transcript.exons))
+
+
+def locus_overlap_fraction(projected, locus) -> float:
+    if not projected.exons:
+        return 0.0
+
+    proj_start = min(s for s, e in projected.exons)
+    proj_end = max(e for s, e in projected.exons)
+
+    overlap = max(0, min(proj_end, locus.end) - max(proj_start, locus.start))
+    proj_len = proj_end - proj_start
+
+    if proj_len <= 0:
+        return 0.0
+
+    return overlap / proj_len
+
+
+# -------------------------
+# Scoring functions
+# -------------------------
+
+def score_projected_transcript(projected, source_transcript) -> ProjectionScore:
+    er = exon_recovery(projected, source_transcript)
+    cc = chain_completeness(projected, source_transcript)
+    comp = compactness(projected, source_transcript)
+    ori = orientation_consistency(projected)
+    frag = fragmentation_penalty(projected, source_transcript)
+
+    projection_score = (
+        0.4 * er +
+        0.2 * cc +
+        0.15 * comp +
+        0.15 * ori -
+        0.1 * frag
+    )
+
+    return ProjectionScore(
+        species=projected.species,
+        projected_id=projected.source_transcript,
+        exon_recovery=er,
+        chain_completeness=cc,
+        compactness=comp,
+        orientation_consistency=ori,
+        fragmentation_penalty=frag,
+        projection_score=projection_score,
+    )
+
+
+def score_projected_transcript_against_locus(projected, source_transcript, locus) -> ProjectionLocusScore:
+    base = score_projected_transcript(projected, source_transcript)
     overlap = locus_overlap_fraction(projected, locus)
-    exon_sim = exon_count_similarity(projected, locus)
-    recovery = exon_recovery_fraction(projected)
-    proj_cov = projection_coverage_score(projected)
 
-    total = (
-        w_overlap * overlap
-        + w_exon_similarity * exon_sim
-        + w_exon_recovery * recovery
-        + w_projection_coverage * proj_cov
+    total_score = (
+        0.7 * base.projection_score +
+        0.3 * overlap
     )
 
     return ProjectionLocusScore(
-        projected_id=projected_transcript_id(projected),
-        locus_id=locus.locus_id,
-        species=projected.species,
+        **base.__dict__,
+        locus_id=locus.locus_id if locus else None,
         overlap_fraction=overlap,
-        exon_count_similarity=exon_sim,
-        exon_recovery_fraction=recovery,
-        projection_coverage=proj_cov,
-        total_score=total,
+        total_score=total_score,
     )
