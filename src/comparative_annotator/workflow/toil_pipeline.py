@@ -537,25 +537,12 @@ def run_round_zero(
         species_csv,
         seed_species,
         manifest_job.rv(),
+        [seed_species],
         memory="2G",
         disk="2G",
     )
 
-    decision_job = round_job.addFollowOnJobFn(
-        annotate_missing_loci_and_choose_next,
-        workdir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
-        seed_species,
-        round_job.rv(),
-        [seed_species],
-        memory="4G",
-        disk="4G",
-    )
-
-    return decision_job.rv()
+    return round_job.rv()
 
 
 def main():
