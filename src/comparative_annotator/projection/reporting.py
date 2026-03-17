@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from comparative_annotator.projection.scoring import score_projected_transcript_against_locus
 from comparative_annotator.projection.transcript_ranking import rank_transcripts_within_locus
-from comparative_annotator.projection.matching import find_candidate_species_loci
-
 from comparative_annotator.projection.matching import (
     find_candidate_species_loci,
     locus_relation_to_projection,
     locus_distance_to_projection,
 )
+
 
 def rank_candidate_loci_with_transcripts(
     projected,
@@ -49,14 +48,14 @@ def rank_candidate_loci_with_transcripts(
                 "locus_strand": locus.strand,
                 "projected_strand": projected.strand,
                 "same_strand": locus.strand == projected.strand,
+                "relation": locus_relation_to_projection(projected, locus),
+                "distance": locus_distance_to_projection(projected, locus),
                 "locus_score": locus_score.total_score,
                 "overlap_fraction": locus_score.overlap_fraction,
                 "projection_score": locus_score.projection_score,
                 "best_transcript_id": None if best_tx is None else best_tx.transcript_id,
                 "best_transcript_score": None if best_tx is None else best_tx.total_score,
                 "transcript_scores": transcript_scores,
-                "relation": locus_relation_to_projection(projected, locus),
-                "distance": locus_distance_to_projection(projected, locus),
             }
         )
 
