@@ -18,10 +18,11 @@ from comparative_annotator.missing.consensus import (
     build_consensus_missing_transcript,
 )
 from comparative_annotator.workflow.progressive import (
-    choose_next_reference_species,
+    compute_reference_order,
     extract_missing_locus_payloads,
+    pick_next_reference_from_order,
+    locus_overlaps_any_interval,
 )
-
 
 def read_json(path):
     path = Path(path)
