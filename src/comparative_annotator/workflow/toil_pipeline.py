@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from toil.common import Toil
@@ -10,6 +11,21 @@ from comparative_annotator.io.gff3 import load_gff3
 from comparative_annotator.io.hal import HALAdapter
 from comparative_annotator.loci.species_loci import build_species_loci
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
+from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
+from comparative_annotator.missing.consensus import (
+    cluster_projected_transcripts,
+    choose_missing_locus_strand,
+    build_consensus_missing_transcript,
+)
+from comparative_annotator.workflow.progressive import (
+    read_json,
+    write_json,
+    get_species_list if False else None,
+)
+from comparative_annotator.workflow.progressive import (
+    choose_next_reference_species,
+    extract_missing_locus_payloads,
+)
 
 
 def read_json(path):
@@ -51,6 +67,20 @@ def build_all_species_loci(transcripts_by_species):
     for sp, txdict in transcripts_by_species.items():
         species_loci[sp] = build_species_loci(list(txdict.values()), species=sp)
     return species_loci
+
+
+def get_hal_tree_newick(hal_path: str) -> str:
+    result = subprocess.run(
+        ["halStats", hal_path],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.endswith(";") and "(" in line:
+            return line
+    raise RuntimeError("Could not extract species tree from halStats output")
 
 
 def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_species):
@@ -252,8 +282,6 @@ def merge_round_results(job, workdir, reference_species, merged_target_paths):
         "reference_species": reference_species,
         "targets": merged_targets,
         "target_summary": target_summary,
-        "new_informative_unresolved_loci": [],
-        "stop": False,
     }
 
     out_path = (
@@ -262,6 +290,109 @@ def merge_round_results(job, workdir, reference_species, merged_target_paths):
         / "round_000"
         / f"ref_{reference_species}"
         / "round_merged.json"
+    )
+    write_json(out_path, out)
+    return str(out_path)
+
+
+def annotate_missing_loci_and_choose_next(
+    job,
+    workdir,
+    annotation_dir,
+    annotation_suffix,
+    hal_path,
+    species_csv,
+    current_reference,
+    round_merged_path,
+    used_reference_species,
+):
+    species_list = get_species_list(species_csv)
+    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+    hal = HALAdapter(str(Path(hal_path).resolve()))
+
+    round_merged = read_json(round_merged_path)
+    missing_by_target = extract_missing_locus_payloads(round_merged)
+
+    new_consensus_by_species = {}
+
+    for target_species, payloads in missing_by_target.items():
+        projected_transcripts = []
+        for payload in payloads:
+            source_species = payload["source_species"]
+            source_tx_id = payload["source_transcript"]
+
+            if source_tx_id not in transcripts_by_species[source_species]:
+                continue
+
+            seed = transcripts_by_species[source_species][source_tx_id]
+            projected_exon_blocks = []
+            for exon_start, exon_end in seed.exons:
+                intervals = hal.project_interval(
+                    source_species=seed.species,
+                    target_species=target_species,
+                    seqid=seed.seqid,
+                    start=exon_start,
+                    end=exon_end,
+                    strand=seed.strand,
+                    source_transcript=seed.transcript_id,
+                )
+                projected_exon_blocks.append(intervals)
+
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            projected_transcripts.extend(pts)
+
+        if not projected_transcripts:
+            continue
+
+        clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
+        consensuses = []
+        for cluster in clusters:
+            best_strand, _ = choose_missing_locus_strand(cluster)
+            consensus = build_consensus_missing_transcript(cluster, best_strand)
+            consensuses.append(consensus)
+
+        if consensuses:
+            new_consensus_by_species[target_species] = consensuses
+
+    informative_species = set(new_consensus_by_species.keys())
+    tree_newick = get_hal_tree_newick(hal_path)
+
+    next_reference = choose_next_reference_species(
+        current_reference=current_reference,
+        used_reference_species=set(used_reference_species),
+        candidate_species_with_new_loci=informative_species,
+        species_tree_newick=tree_newick,
+    )
+
+    out = {
+        "current_reference": current_reference,
+        "new_consensus_by_species": {
+            sp: [
+                {
+                    "species": c.species,
+                    "seqid": c.seqid,
+                    "strand": c.strand,
+                    "support_count": c.support_count,
+                    "total_chain_score": c.total_chain_score,
+                    "mean_exon_recovery": c.mean_exon_recovery,
+                    "source_transcripts": c.source_transcripts,
+                    "exons": c.exons,
+                }
+                for c in cs
+            ]
+            for sp, cs in new_consensus_by_species.items()
+        },
+        "used_reference_species": sorted(set(used_reference_species) | {current_reference}),
+        "next_reference_species": next_reference,
+        "stop": next_reference is None,
+    }
+
+    out_path = (
+        Path(workdir)
+        / "rounds"
+        / "round_000"
+        / f"ref_{current_reference}"
+        / "post_round_decision.json"
     )
     write_json(out_path, out)
     return str(out_path)
@@ -399,7 +530,21 @@ def run_round_zero(
         disk="2G",
     )
 
-    return round_job.rv()
+    decision_job = round_job.addFollowOnJobFn(
+        annotate_missing_loci_and_choose_next,
+        workdir,
+        annotation_dir,
+        annotation_suffix,
+        hal_path,
+        species_csv,
+        seed_species,
+        round_job.rv(),
+        [seed_species],
+        memory="4G",
+        disk="4G",
+    )
+
+    return decision_job.rv()
 
 
 def main():
