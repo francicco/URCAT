@@ -67,6 +67,7 @@ def main():
         print(f"=== {seed.transcript_id} -> {target} ===")
         print("primary:", clocus.primary)
         print("alternatives:", clocus.alternatives)
+        print("strand_conflicts:", clocus.strand_conflicts)
         print("missing:", clocus.missing_annotations)
 
 
