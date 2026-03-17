@@ -158,7 +158,7 @@ def main():
         print("alternative_transcripts:", clocus.alternative_transcripts)
         print("=========================================\n")
 
-    # write merged Eisa annotation at the end
+    # write merged annotations at the end
     urcat_consensus_by_species = {
         "Eisa": eisa_consensus,
         "Hmel": [],
