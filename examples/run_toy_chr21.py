@@ -7,6 +7,12 @@ from comparative_annotator.projection.matching import nearest_species_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
 from comparative_annotator.projection.reporting import rank_candidate_loci_with_transcripts
 
+from comparative_annotator.missing.consensus import (
+    cluster_projected_transcripts,
+    choose_missing_locus_strand,
+    build_consensus_missing_transcript,
+)
+
 
 def main():
     hmel = load_gff3("data/Hmel202001o.test.gff3", species="Hmel")
@@ -98,6 +104,34 @@ def main():
                         f"best_tx={row['best_transcript_id']} "
                         f"best_tx_score={row['best_transcript_score']}"
                     )
+
+        # Missing-locus consensus diagnostics
+        if target == "Eisa" and projected_transcripts:
+            print("missing-locus consensus diagnostics:")
+
+            clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
+            print(f"number of clusters: {len(clusters)}")
+
+            for i, cluster in enumerate(clusters, start=1):
+                print(f"cluster {i}:")
+                for pt in cluster:
+                    print("  support transcript:", pt)
+
+                best_strand, strand_scores = choose_missing_locus_strand(cluster)
+                consensus = build_consensus_missing_transcript(cluster, best_strand)
+
+                print("  chosen strand:", best_strand)
+                print("  strand scores:")
+                for strand, info in strand_scores.items():
+                    print(
+                        f"    {strand}: "
+                        f"support_count={info['support_count']} "
+                        f"total_chain_score={info['total_chain_score']:.3f} "
+                        f"mean_exon_recovery={info['mean_exon_recovery']:.3f} "
+                        f"score={info['score']:.3f}"
+                    )
+
+                print("  consensus transcript:", consensus)
 
         clocus = infer_comparative_locus(
             seed_transcript=seed,
