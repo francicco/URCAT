@@ -117,3 +117,16 @@ def nearest_species_locus(
             best_locus = locus
 
     return best_locus, best_distance
+
+
+def find_overlapping_species_loci_any_strand(projected, species_loci):
+    hits = []
+
+    for locus in species_loci:
+        if locus.seqid != projected.seqid:
+            continue
+
+        if overlaps(projected.start, projected.end, locus.start, locus.end):
+            hits.append(locus)
+
+    return hits
