@@ -18,11 +18,6 @@ from comparative_annotator.missing.consensus import (
     build_consensus_missing_transcript,
 )
 from comparative_annotator.workflow.progressive import (
-    read_json,
-    write_json,
-    get_species_list if False else None,
-)
-from comparative_annotator.workflow.progressive import (
     choose_next_reference_species,
     extract_missing_locus_payloads,
 )
