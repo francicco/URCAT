@@ -5,11 +5,12 @@ from comparative_annotator.projection.adjudication import choose_best_locus
 from comparative_annotator.projection.matching import (
     find_overlapping_species_loci,
     find_overlapping_species_loci_any_strand,
+    find_candidate_species_loci,
 )
+
 from comparative_annotator.projection.transcript_ranking import (
     choose_best_transcript_within_locus,
 )
-
 
 def build_comparative_locus_from_projection(
     seed_species,
