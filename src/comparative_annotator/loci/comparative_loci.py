@@ -18,6 +18,15 @@ def build_comparative_locus(
         seed_transcript=seed_transcript,
     )
 
+    # Minimal fake source transcript context for this legacy builder
+    class _SourceTranscript:
+        def __init__(self, transcript_id, species):
+            self.transcript_id = transcript_id
+            self.species = species
+            self.exons = []
+
+    source_transcript = _SourceTranscript(seed_transcript, seed_species)
+
     for proj in projections:
         loci = find_overlapping_species_loci(
             proj,
@@ -31,7 +40,11 @@ def build_comparative_locus(
             )
             continue
 
-        best, alternatives = choose_best_locus(proj, loci)
+        best, alternatives = choose_best_locus(
+            projected=proj,
+            source_transcript=source_transcript,
+            loci=loci,
+        )
 
         if best is not None:
             clocus.set_primary(proj.species, best.locus_id)
