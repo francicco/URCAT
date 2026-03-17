@@ -4,7 +4,7 @@ from comparative_annotator.models.locus import SpeciesLocus
 from comparative_annotator.loci.comparative_builder import build_comparative_locus_from_projection
 
 
-def test_strand_conflict_candidate():
+def test_opposite_strand_overlap_can_still_be_ranked():
     source = CandidateTranscript(
         transcript_id="tx1",
         species="Hmel",
@@ -48,6 +48,7 @@ def test_strand_conflict_candidate():
         transcripts_by_species={},
     )
 
+    assert clocus.primary["Diul"] == "diul_locus1"
     assert "Diul" in clocus.strand_conflicts
     assert clocus.strand_conflicts["Diul"] == ["diul_locus1"]
     assert "Diul" not in clocus.missing_annotations
