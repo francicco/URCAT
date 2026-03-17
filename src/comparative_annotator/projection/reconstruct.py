@@ -91,7 +91,7 @@ def reconstruct_projected_transcripts(
     - merge fragmented blocks per source exon
     - group by target seqid and strand
     - allow both forward and reverse co-linear chains
-    - score the resulting chains
+    - keep only the best chain per target seqid/strand
     """
     indexed: list[IndexedProjection] = []
 
@@ -135,17 +135,21 @@ def reconstruct_projected_transcripts(
         )
 
         candidates = [c for c in [forward_chain, reverse_chain] if c is not None]
+        if not candidates:
+            continue
 
-        # deduplicate identical exon chains
-        unique: dict[tuple, ProjectedTranscript] = {}
-        for c in candidates:
-            key = (c.seqid, c.strand, tuple(c.exons))
-            if key not in unique or (c.chain_score or 0) > (unique[key].chain_score or 0):
-                unique[key] = c
+        # Keep only the best candidate for this target seqid/strand.
+        # Prefer more recovered source exons; break ties with chain_score.
+        best = max(
+            candidates,
+            key=lambda c: (
+                c.coverage if c.coverage is not None else 0,
+                c.chain_score if c.chain_score is not None else 0.0,
+            ),
+        )
 
-        reconstructed.extend(unique.values())
+        reconstructed.append(best)
 
-    # rank by score descending
     reconstructed.sort(key=lambda x: (x.chain_score or 0), reverse=True)
     return reconstructed
 
