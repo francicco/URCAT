@@ -13,6 +13,8 @@ from comparative_annotator.missing.consensus import (
     build_consensus_missing_transcript,
 )
 
+from comparative_annotator.io.gff3_writer import write_merged_gff3
+
 
 def main():
     hmel = load_gff3("data/Hmel202001o.test.gff3", species="Hmel")
@@ -38,6 +40,9 @@ def main():
     seed = hmel["transcript:Hmel202001oG3.1"]
 
     hal = HALAdapter("data/3SpChr21.hal")
+
+    # collect new URCAT loci for Eisa here
+    eisa_consensus = []
 
     for target in ["Eisa", "Diul"]:
         projected_exon_blocks = []
@@ -105,7 +110,7 @@ def main():
                         f"best_tx_score={row['best_transcript_score']}"
                     )
 
-        # Missing-locus consensus diagnostics
+        # Missing-locus consensus diagnostics + collect new Eisa loci
         if target == "Eisa" and projected_transcripts:
             print("missing-locus consensus diagnostics:")
 
@@ -133,6 +138,9 @@ def main():
 
                 print("  consensus transcript:", consensus)
 
+                if consensus is not None:
+                    eisa_consensus.append(consensus)
+
         clocus = infer_comparative_locus(
             seed_transcript=seed,
             target_species=target,
@@ -149,6 +157,16 @@ def main():
         print("primary_transcripts:", clocus.primary_transcripts)
         print("alternative_transcripts:", clocus.alternative_transcripts)
         print("=========================================\n")
+
+    # write merged Eisa annotation at the end
+    write_merged_gff3(
+        output_path="Eisa_merged_urcat.gff3",
+        original_transcripts_by_species=transcripts_by_species,
+        species="Eisa",
+        urcat_consensus_loci=eisa_consensus,
+    )
+
+    print("Wrote merged annotation to Eisa_merged_urcat.gff3")
 
 
 if __name__ == "__main__":
