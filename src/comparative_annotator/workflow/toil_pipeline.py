@@ -446,6 +446,7 @@ def schedule_round_from_manifest(
     species_csv,
     reference_species,
     manifest_path,
+    used_reference_species,
 ):
     species_list = get_species_list(species_csv)
     targets = [sp for sp in species_list if sp != reference_species]
@@ -467,7 +468,7 @@ def schedule_round_from_manifest(
         )
         target_merge_rvs.append(target_job.rv())
 
-    round_merge = job.addFollowOnJobFn(
+    round_merge_job = job.addFollowOnJobFn(
         merge_round_results,
         workdir,
         reference_species,
@@ -475,7 +476,22 @@ def schedule_round_from_manifest(
         memory="2G",
         disk="2G",
     )
-    return round_merge.rv()
+
+    decision_job = round_merge_job.addFollowOnJobFn(
+        annotate_missing_loci_and_choose_next,
+        workdir,
+        annotation_dir,
+        annotation_suffix,
+        hal_path,
+        species_csv,
+        reference_species,
+        round_merge_job.rv(),
+        used_reference_species,
+        memory="4G",
+        disk="4G",
+    )
+
+    return decision_job.rv()
 
 
 def run_round_zero(
