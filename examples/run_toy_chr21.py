@@ -13,8 +13,7 @@ from comparative_annotator.missing.consensus import (
     build_consensus_missing_transcript,
 )
 
-from comparative_annotator.io.gff3_writer import write_full_merged_gff3
-
+from comparative_annotator.io.gff3_writer import write_species_gff3_outputs
 
 def main():
     hmel = load_gff3("data/Hmel202001o.test.gff3", species="Hmel")
