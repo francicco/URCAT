@@ -707,7 +707,6 @@ def main():
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
-    parser.add_argument("jobStore")
     parser.add_argument("--outputDir", required=True)
     parser.add_argument("--seedSpecies", required=True)
     parser.add_argument("--speciesCsv", required=True)
@@ -737,7 +736,6 @@ def main():
 
     with Toil(options) as toil:
         toil.start(root)
-
 
 if __name__ == "__main__":
     main()
