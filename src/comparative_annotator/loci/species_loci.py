@@ -17,6 +17,13 @@ def build_species_loci(
     on the same seqid and strand.
     """
 
+    def infer_gene_id(transcript_ids):
+        # example transcript: "transcript:Eisa.Eisa2100G1.1"
+        # -> gene: "Eisa.Eisa2100G1"
+        tx = transcript_ids[0]
+        tx = tx.replace("transcript:", "")
+        return tx.rsplit(".", 1)[0]
+
     txs = sorted(
         [tx for tx in transcripts if tx.species == species],
         key=lambda x: (x.seqid, x.strand, x.start, x.end),
@@ -30,7 +37,7 @@ def build_species_loci(
         if current is None:
             counter += 1
             current = SpeciesLocus(
-                locus_id=f"{species}_locus_{counter}",
+                locus_id = infer_gene_id(locus.transcripts)
                 species=species,
                 seqid=tx.seqid,
                 start=tx.start,
