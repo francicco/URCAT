@@ -364,37 +364,46 @@ def annotate_missing_loci_and_choose_next(
             new_consensus_by_species[target_species] = consensuses
 
     # Orphan detection
-    orphan_loci_by_species = {}
-    pending_frontiers_by_species = {}
+orphan_loci_by_species = {}
+pending_frontiers_by_species = {}
 
-    source_species_used_so_far = list(sorted(set(used_reference_species)))
+source_species_used_so_far = list(sorted(set(used_reference_species)))
 
-    for target_species in species_list:
-        native_loci = species_loci[target_species]
-        projected_spans = collect_projected_transcript_spans_for_species(
-            transcripts_by_species=transcripts_by_species,
-            source_species_list=source_species_used_so_far,
-            target_species=target_species,
-            hal=hal,
+for target_species in species_list:
+    if target_species in used_reference_species:
+        orphan_loci_by_species[target_species] = []
+        continue
+
+    native_loci = species_loci[target_species]
+    projected_spans = collect_projected_transcript_spans_for_species(
+        transcripts_by_species=transcripts_by_species,
+        source_species_list=source_species_used_so_far,
+        target_species=target_species,
+        hal=hal,
+    )
+
+    explained_ids = explained_locus_ids_by_species.get(target_species, set())
+
+    orphan_loci = []
+    for locus in native_loci:
+        if locus.locus_id in explained_ids:
+            continue
+        if locus_overlaps_any_interval(locus, projected_spans):
+            continue
+
+        orphan_loci.append(
+            {
+                "locus_id": locus.locus_id,
+                "species": locus.species,
+                "seqid": locus.seqid,
+                "start": locus.start,
+                "end": locus.end,
+                "strand": locus.strand,
+                "transcripts": locus.transcripts,
+            }
         )
 
-        orphan_loci = []
-        for locus in native_loci:
-            if not locus_overlaps_any_interval(locus, projected_spans):
-                orphan_loci.append(
-                    {
-                        "locus_id": locus.locus_id,
-                        "species": locus.species,
-                        "seqid": locus.seqid,
-                        "start": locus.start,
-                        "end": locus.end,
-                        "strand": locus.strand,
-                        "transcripts": locus.transcripts,
-                    }
-                )
-
-        orphan_loci_by_species[target_species] = orphan_loci
-
+    orphan_loci_by_species[target_species] = orphan_loci
     # Pending frontiers combine:
     # 1) URCAT new consensuses
     # 2) orphan native loci
