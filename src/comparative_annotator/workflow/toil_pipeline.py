@@ -875,12 +875,13 @@ def schedule_round_from_manifest(
     annotation_suffix,
     hal_path,
     species_csv,
-    round_id,
     reference_species,
     manifest_path,
     used_reference_species,
-    batch_size,
 ):
+    manifest = read_json(manifest_path)
+    round_id = manifest["round_id"]
+
     species_list = get_species_list(species_csv)
     targets = [sp for sp in species_list if sp != reference_species]
 
@@ -893,7 +894,6 @@ def schedule_round_from_manifest(
             annotation_suffix,
             hal_path,
             species_csv,
-            round_id,
             reference_species,
             target,
             manifest_path,
@@ -919,7 +919,6 @@ def schedule_round_from_manifest(
         annotation_suffix,
         hal_path,
         species_csv,
-        round_id,
         reference_species,
         round_merge_job.rv(),
         used_reference_species,
@@ -927,7 +926,16 @@ def schedule_round_from_manifest(
         disk="4G",
     )
 
-    next_round_job = decision_job.addFollowOnJobFn(
+    summary_job = decision_job.addFollowOnJobFn(
+        write_round_summary,
+        workdir,
+        round_merge_job.rv(),
+        decision_job.rv(),
+        memory="1G",
+        disk="1G",
+    )
+
+    next_round_job = summary_job.addFollowOnJobFn(
         schedule_next_round,
         decision_job.rv(),
         workdir,
@@ -935,7 +943,7 @@ def schedule_round_from_manifest(
         annotation_suffix,
         hal_path,
         species_csv,
-        batch_size,
+        200,  # replace with batch_size if you already pass it through
         memory="2G",
         disk="2G",
     )
