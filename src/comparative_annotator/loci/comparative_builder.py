@@ -33,17 +33,16 @@ def build_comparative_locus_from_projection(
         loci_for_species = species_loci.get(proj.species, [])
 
         # Prefer same-strand overlaps, but do not exclude opposite-strand overlaps.
-        same_strand_loci = find_overlapping_species_loci(proj, loci_for_species)
-        candidate_loci = same_strand_loci
+        candidate_loci = find_candidate_species_loci(
+            proj,
+            loci_for_species,
+            n_flank=2,
+        )
 
-        if not candidate_loci:
-            any_strand_loci = find_overlapping_species_loci_any_strand(proj, loci_for_species)
-            candidate_loci = any_strand_loci
-
-            # record diagnostic strand conflicts, but still allow scoring/ranking
-            for locus in any_strand_loci:
-                if locus.strand != proj.strand:
-                    clocus.add_strand_conflict(proj.species, locus.locus_id)
+        overlapping_any = find_overlapping_species_loci_any_strand(proj, loci_for_species)
+        for locus in overlapping_any:
+            if locus.strand != proj.strand:
+                clocus.add_strand_conflict(proj.species, locus.locus_id)
 
         if candidate_loci:
             best, alternatives = choose_best_locus(
