@@ -13,7 +13,7 @@ from comparative_annotator.missing.consensus import (
     build_consensus_missing_transcript,
 )
 
-from comparative_annotator.io.gff3_writer import write_merged_gff3
+from comparative_annotator.io.gff3_writer import write_full_merged_gff3
 
 
 def main():
