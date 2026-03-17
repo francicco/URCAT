@@ -59,7 +59,6 @@ def locus_overlap_fraction(
     overlap_start = max(projected.start, locus.start)
     overlap_end = min(projected.end, locus.end)
 
-    # inclusive coordinates
     overlap = max(0, overlap_end - overlap_start + 1)
     proj_len = projected.end - projected.start + 1
 
@@ -139,14 +138,17 @@ def nearest_species_locus(projected, species_loci, same_strand_only=False):
 
     return best_locus, best_distance
 
+
 def projected_span(projected):
     return projected.start, projected.end
 
 
 def locus_relation_to_projection(projected, locus):
     """
-    Classify locus position relative to projected span on the same seqid.
-    Returns one of: overlap, upstream, downstream
+    Return one of:
+    - overlap
+    - upstream
+    - downstream
     """
     p_start, p_end = projected_span(projected)
 
@@ -207,6 +209,7 @@ def find_candidate_species_loci(projected, species_loci, n_flank=2):
 
     unique = []
     seen = set()
+
     for locus in ordered:
         if locus.locus_id in seen:
             continue
