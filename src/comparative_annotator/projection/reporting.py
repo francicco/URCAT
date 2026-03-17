@@ -13,13 +13,11 @@ def rank_candidate_loci_with_transcripts(
     if target_transcripts_by_id is None:
         target_transcripts_by_id = {}
 
-    same_strand = find_overlapping_species_loci(projected, species_loci)
-    any_strand = find_overlapping_species_loci_any_strand(projected, species_loci)
-
-    if same_strand:
-        candidate_loci = same_strand
-    else:
-        candidate_loci = any_strand
+    candidate_loci = find_candidate_species_loci(
+        projected,
+        species_loci,
+        n_flank=2,
+    )
 
     rows = []
 
