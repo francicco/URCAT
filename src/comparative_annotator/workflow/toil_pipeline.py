@@ -10,19 +10,20 @@ from toil.job import Job
 from comparative_annotator.io.gff3 import load_gff3
 from comparative_annotator.io.hal import HALAdapter
 from comparative_annotator.loci.species_loci import build_species_loci
+from comparative_annotator.missing.consensus import (
+    build_consensus_missing_transcript,
+    choose_missing_locus_strand,
+    cluster_projected_transcripts,
+)
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
-from comparative_annotator.missing.consensus import (
-    cluster_projected_transcripts,
-    choose_missing_locus_strand,
-    build_consensus_missing_transcript,
-)
 from comparative_annotator.workflow.progressive import (
     compute_reference_order,
     extract_missing_locus_payloads,
-    pick_next_reference_from_order,
     locus_overlaps_any_interval,
+    pick_next_reference_from_order,
 )
+
 
 def read_json(path):
     path = Path(path)
@@ -77,6 +78,72 @@ def get_hal_tree_newick(hal_path: str) -> str:
         if line.endswith(";") and "(" in line:
             return line
     raise RuntimeError("Could not extract species tree from halStats output")
+
+
+def collect_explained_locus_ids_from_round(round_merged_json):
+    explained = {}
+
+    for target_block in round_merged_json["targets"]:
+        target_species = target_block["target_species"]
+        explained_ids = set()
+
+        for r in target_block["results"]:
+            if r.get("status") != "ok":
+                continue
+
+            for sp, locus_id in r.get("primary", {}).items():
+                if sp == target_species and locus_id:
+                    explained_ids.add(locus_id)
+
+            for sp, locus_ids in r.get("alternatives", {}).items():
+                if sp == target_species:
+                    explained_ids.update(locus_ids)
+
+        explained[target_species] = explained_ids
+
+    return explained
+
+
+def collect_projected_transcript_spans_for_species(
+    transcripts_by_species,
+    source_species_list,
+    target_species,
+    hal,
+):
+    spans = []
+
+    for source_species in source_species_list:
+        if source_species == target_species:
+            continue
+
+        for _, seed in transcripts_by_species[source_species].items():
+            projected_exon_blocks = []
+            for exon_start, exon_end in seed.exons:
+                intervals = hal.project_interval(
+                    source_species=seed.species,
+                    target_species=target_species,
+                    seqid=seed.seqid,
+                    start=exon_start,
+                    end=exon_end,
+                    strand=seed.strand,
+                    source_transcript=seed.transcript_id,
+                )
+                projected_exon_blocks.append(intervals)
+
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            for pt in pts:
+                spans.append(
+                    {
+                        "seqid": pt.seqid,
+                        "start": pt.start,
+                        "end": pt.end,
+                        "strand": pt.strand,
+                        "source_species": source_species,
+                        "source_transcript": pt.source_transcript,
+                    }
+                )
+
+    return spans
 
 
 def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_species):
@@ -302,18 +369,6 @@ def annotate_missing_loci_and_choose_next(
     round_merged_path,
     used_reference_species,
 ):
-    from comparative_annotator.workflow.progressive import (
-        compute_reference_order,
-        extract_missing_locus_payloads,
-        pick_next_reference_from_order,
-        locus_overlaps_any_interval,
-    )
-    from comparative_annotator.missing.consensus import (
-        cluster_projected_transcripts,
-        choose_missing_locus_strand,
-        build_consensus_missing_transcript,
-    )
-
     species_list = get_species_list(species_csv)
     transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
@@ -321,11 +376,13 @@ def annotate_missing_loci_and_choose_next(
 
     round_merged = read_json(round_merged_path)
     missing_by_target = extract_missing_locus_payloads(round_merged)
+    explained_locus_ids_by_species = collect_explained_locus_ids_from_round(round_merged)
 
     new_consensus_by_species = {}
 
     for target_species, payloads in missing_by_target.items():
         projected_transcripts = []
+
         for payload in payloads:
             source_species = payload["source_species"]
             source_tx_id = payload["source_transcript"]
@@ -335,6 +392,7 @@ def annotate_missing_loci_and_choose_next(
 
             seed = transcripts_by_species[source_species][source_tx_id]
             projected_exon_blocks = []
+
             for exon_start, exon_end in seed.exons:
                 intervals = hal.project_interval(
                     source_species=seed.species,
@@ -355,6 +413,7 @@ def annotate_missing_loci_and_choose_next(
 
         clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
         consensuses = []
+
         for cluster in clusters:
             best_strand, _ = choose_missing_locus_strand(cluster)
             consensus = build_consensus_missing_transcript(cluster, best_strand)
@@ -363,51 +422,50 @@ def annotate_missing_loci_and_choose_next(
         if consensuses:
             new_consensus_by_species[target_species] = consensuses
 
-    # Orphan detection
-orphan_loci_by_species = {}
-pending_frontiers_by_species = {}
+    orphan_loci_by_species = {}
+    pending_frontiers_by_species = {}
+    source_species_used_so_far = sorted(set(used_reference_species))
 
-source_species_used_so_far = list(sorted(set(used_reference_species)))
-
-for target_species in species_list:
-    if target_species in used_reference_species:
-        orphan_loci_by_species[target_species] = []
-        continue
-
-    native_loci = species_loci[target_species]
-    projected_spans = collect_projected_transcript_spans_for_species(
-        transcripts_by_species=transcripts_by_species,
-        source_species_list=source_species_used_so_far,
-        target_species=target_species,
-        hal=hal,
-    )
-
-    explained_ids = explained_locus_ids_by_species.get(target_species, set())
-
-    orphan_loci = []
-    for locus in native_loci:
-        if locus.locus_id in explained_ids:
-            continue
-        if locus_overlaps_any_interval(locus, projected_spans):
+    for target_species in species_list:
+        if target_species in used_reference_species:
+            orphan_loci_by_species[target_species] = []
             continue
 
-        orphan_loci.append(
-            {
-                "locus_id": locus.locus_id,
-                "species": locus.species,
-                "seqid": locus.seqid,
-                "start": locus.start,
-                "end": locus.end,
-                "strand": locus.strand,
-                "transcripts": locus.transcripts,
-            }
+        native_loci = species_loci[target_species]
+        projected_spans = collect_projected_transcript_spans_for_species(
+            transcripts_by_species=transcripts_by_species,
+            source_species_list=source_species_used_so_far,
+            target_species=target_species,
+            hal=hal,
         )
 
-    orphan_loci_by_species[target_species] = orphan_loci
-    # Pending frontiers combine:
-    # 1) URCAT new consensuses
-    # 2) orphan native loci
+        explained_ids = explained_locus_ids_by_species.get(target_species, set())
+        orphan_loci = []
+
+        for locus in native_loci:
+            if locus.locus_id in explained_ids:
+                continue
+            if locus_overlaps_any_interval(locus, projected_spans):
+                continue
+
+            orphan_loci.append(
+                {
+                    "locus_id": locus.locus_id,
+                    "species": locus.species,
+                    "seqid": locus.seqid,
+                    "start": locus.start,
+                    "end": locus.end,
+                    "strand": locus.strand,
+                    "transcripts": locus.transcripts,
+                }
+            )
+
+        orphan_loci_by_species[target_species] = orphan_loci
+
     for sp in species_list:
+        if sp in used_reference_species:
+            continue
+
         pending = []
 
         for c in new_consensus_by_species.get(sp, []):
@@ -642,95 +700,6 @@ def run_round_zero(
 
     return round_job.rv()
 
-def get_hal_tree_newick(hal_path: str) -> str:
-    import subprocess
-
-    result = subprocess.run(
-        ["halStats", hal_path],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.endswith(";") and "(" in line:
-            return line
-    raise RuntimeError("Could not extract species tree from halStats output")
-
-def extract_projected_spans_for_target(target_merged_json: dict):
-    spans = []
-
-    for r in target_merged_json["results"]:
-        if r.get("status") != "ok":
-            continue
-
-        target_species = r["target_species"]
-
-        for species_name, loci in r.get("missing_annotations", {}).items():
-            if species_name != target_species:
-                continue
-            for s in loci:
-                seqid, rest = s.split(":", 1)
-                coords, strand = rest.rsplit(":", 1)
-                start, end = coords.split("-")
-                spans.append(
-                    {
-                        "seqid": seqid,
-                        "start": int(start),
-                        "end": int(end),
-                        "strand": strand,
-                        "source_transcript": r["source_transcript"],
-                        "kind": "missing_projection_span",
-                    }
-                )
-
-        for species_name, locus_id in r.get("primary", {}).items():
-            if species_name != target_species:
-                continue
-            # primary IDs themselves are not coordinates, so nothing to add here
-
-    return spans
-
-def collect_projected_transcript_spans_for_species(
-    transcripts_by_species,
-    source_species_list,
-    target_species,
-    hal,
-):
-    spans = []
-
-    for source_species in source_species_list:
-        for tx_id, seed in transcripts_by_species[source_species].items():
-            if source_species == target_species:
-                continue
-
-            projected_exon_blocks = []
-            for exon_start, exon_end in seed.exons:
-                intervals = hal.project_interval(
-                    source_species=seed.species,
-                    target_species=target_species,
-                    seqid=seed.seqid,
-                    start=exon_start,
-                    end=exon_end,
-                    strand=seed.strand,
-                    source_transcript=seed.transcript_id,
-                )
-                projected_exon_blocks.append(intervals)
-
-            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
-            for pt in pts:
-                spans.append(
-                    {
-                        "seqid": pt.seqid,
-                        "start": pt.start,
-                        "end": pt.end,
-                        "strand": pt.strand,
-                        "source_species": source_species,
-                        "source_transcript": pt.source_transcript,
-                    }
-                )
-
-    return spans
 
 def main():
     from argparse import ArgumentParser
@@ -738,6 +707,7 @@ def main():
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
+    parser.add_argument("jobStore")
     parser.add_argument("--outputDir", required=True)
     parser.add_argument("--seedSpecies", required=True)
     parser.add_argument("--speciesCsv", required=True)
