@@ -34,6 +34,7 @@ class FrontierSeedTranscript:
     strand: str
     exons: list
 
+
 def read_json(path):
     path = Path(path)
     with open(path) as fh:
@@ -54,6 +55,13 @@ def chunked(items, size):
 
 def get_species_list(species_csv: str):
     return [x.strip() for x in species_csv.split(",") if x.strip()]
+
+
+def append_unique_preserve_order(items, value):
+    out = list(items)
+    if value not in out:
+        out.append(value)
+    return out
 
 
 def load_transcripts_for_species(annotation_dir: str, annotation_suffix: str, species: str):
@@ -87,6 +95,19 @@ def get_hal_tree_newick(hal_path: str) -> str:
         if line.endswith(";") and "(" in line:
             return line
     raise RuntimeError("Could not extract species tree from halStats output")
+
+
+def build_consensus_seed(item):
+    return FrontierSeedTranscript(
+        transcript_id=(
+            f"URCAT_CONSENSUS:{item['species']}:{item['seqid']}:"
+            f"{item['start']}-{item['end']}"
+        ),
+        species=item["species"],
+        seqid=item["seqid"],
+        strand=item["strand"],
+        exons=item["exons"],
+    )
 
 
 def collect_explained_locus_ids_from_round(round_merged_json):
@@ -127,6 +148,7 @@ def collect_projected_transcript_spans_for_species(
 
         for _, seed in transcripts_by_species[source_species].items():
             projected_exon_blocks = []
+
             for exon_start, exon_end in seed.exons:
                 intervals = hal.project_interval(
                     source_species=seed.species,
@@ -155,14 +177,147 @@ def collect_projected_transcript_spans_for_species(
     return spans
 
 
-def build_consensus_seed(item):
-    return FrontierSeedTranscript(
-        transcript_id=f"URCAT_CONSENSUS:{item['species']}:{item['seqid']}:{item['start']}-{item['end']}",
-        species=item["species"],
-        seqid=item["seqid"],
-        strand=item["strand"],
-        exons=item["exons"],
+def build_round_summary(round_merged, decision):
+    reference_species = round_merged["reference_species"]
+    round_id = round_merged["round_id"]
+
+    targets_summary = {}
+
+    for target_block in round_merged["targets"]:
+        target_species = target_block["target_species"]
+        results = target_block["results"]
+
+        n_processed = len(results)
+        n_ok = sum(1 for r in results if r.get("status") == "ok")
+        n_error = sum(1 for r in results if r.get("status") == "error")
+
+        n_primary = sum(
+            1
+            for r in results
+            if r.get("status") == "ok" and bool(r.get("primary"))
+        )
+
+        n_alternative_only = sum(
+            1
+            for r in results
+            if r.get("status") == "ok"
+            and not bool(r.get("primary"))
+            and bool(r.get("alternatives"))
+        )
+
+        n_missing = sum(
+            1
+            for r in results
+            if r.get("status") == "ok" and bool(r.get("missing_annotations"))
+        )
+
+        n_strand_conflict = sum(
+            1
+            for r in results
+            if r.get("status") == "ok" and bool(r.get("strand_conflicts"))
+        )
+
+        n_new_consensus = len(decision.get("new_consensus_by_species", {}).get(target_species, []))
+        n_orphan_loci = len(decision.get("orphan_loci_by_species", {}).get(target_species, []))
+        n_pending_frontier = len(decision.get("pending_frontiers_by_species", {}).get(target_species, []))
+
+        targets_summary[target_species] = {
+            "n_processed": n_processed,
+            "n_ok": n_ok,
+            "n_error": n_error,
+            "n_primary": n_primary,
+            "n_alternative_only": n_alternative_only,
+            "n_missing": n_missing,
+            "n_strand_conflict": n_strand_conflict,
+            "n_new_consensus": n_new_consensus,
+            "n_orphan_loci": n_orphan_loci,
+            "n_pending_frontier": n_pending_frontier,
+        }
+
+    return {
+        "round_id": round_id,
+        "seed_species": decision["seed_species"],
+        "reference_species": reference_species,
+        "reference_order": decision["reference_order"],
+        "used_reference_species": decision["used_reference_species"],
+        "next_reference_species": decision["next_reference_species"],
+        "stop": decision["stop"],
+        "targets": targets_summary,
+    }
+
+
+def write_round_summary(job, workdir, round_merged_path, decision_path):
+    round_merged = read_json(round_merged_path)
+    decision = read_json(decision_path)
+
+    summary = build_round_summary(round_merged, decision)
+
+    round_id = summary["round_id"]
+    reference_species = summary["reference_species"]
+
+    out_dir = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{reference_species}"
     )
+
+    json_path = out_dir / "summary.json"
+    write_json(json_path, summary)
+
+    tsv_path = out_dir / "summary.tsv"
+    with open(tsv_path, "w") as fh:
+        fh.write(
+            "\t".join(
+                [
+                    "round_id",
+                    "seed_species",
+                    "reference_species",
+                    "target_species",
+                    "n_processed",
+                    "n_ok",
+                    "n_error",
+                    "n_primary",
+                    "n_alternative_only",
+                    "n_missing",
+                    "n_strand_conflict",
+                    "n_new_consensus",
+                    "n_orphan_loci",
+                    "n_pending_frontier",
+                    "next_reference_species",
+                    "stop",
+                ]
+            )
+            + "\n"
+        )
+
+        for target_species, stats in summary["targets"].items():
+            fh.write(
+                "\t".join(
+                    [
+                        str(summary["round_id"]),
+                        str(summary["seed_species"]),
+                        str(summary["reference_species"]),
+                        str(target_species),
+                        str(stats["n_processed"]),
+                        str(stats["n_ok"]),
+                        str(stats["n_error"]),
+                        str(stats["n_primary"]),
+                        str(stats["n_alternative_only"]),
+                        str(stats["n_missing"]),
+                        str(stats["n_strand_conflict"]),
+                        str(stats["n_new_consensus"]),
+                        str(stats["n_orphan_loci"]),
+                        str(stats["n_pending_frontier"]),
+                        str(summary["next_reference_species"]),
+                        str(summary["stop"]),
+                    ]
+                )
+                + "\n"
+            )
+
+    return str(json_path)
+
 
 def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_species):
     tx = load_transcripts_for_species(annotation_dir, annotation_suffix, seed_species)
@@ -172,7 +327,14 @@ def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_sp
         "frontier_kind": "seed_all_transcripts",
         "transcript_ids": sorted(tx.keys()),
     }
-    path = Path(workdir) / "rounds" / "round_000" / f"ref_{seed_species}" / "frontier.json"
+
+    path = (
+        Path(workdir)
+        / "rounds"
+        / "round_000"
+        / f"ref_{seed_species}"
+        / "frontier.json"
+    )
     write_json(path, out)
     return str(path)
 
@@ -282,7 +444,6 @@ def run_project_batch(
     batch_id,
 ):
     species_list = get_species_list(species_csv)
-
     transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(hal_path).resolve()))
@@ -428,147 +589,6 @@ def merge_round_results(job, workdir, round_id, reference_species, merged_target
     write_json(out_path, out)
     return str(out_path)
 
-def build_round_summary(round_merged, decision):
-    reference_species = round_merged["reference_species"]
-    round_id = round_merged["round_id"]
-
-    targets_summary = {}
-
-    for target_block in round_merged["targets"]:
-        target_species = target_block["target_species"]
-        results = target_block["results"]
-
-        n_processed = len(results)
-        n_ok = sum(1 for r in results if r.get("status") == "ok")
-        n_error = sum(1 for r in results if r.get("status") == "error")
-
-        n_primary = sum(
-            1
-            for r in results
-            if r.get("status") == "ok" and bool(r.get("primary"))
-        )
-
-        n_alternative_only = sum(
-            1
-            for r in results
-            if r.get("status") == "ok"
-            and (not r.get("primary"))
-            and bool(r.get("alternatives"))
-        )
-
-        n_missing = sum(
-            1
-            for r in results
-            if r.get("status") == "ok" and bool(r.get("missing_annotations"))
-        )
-
-        n_strand_conflict = sum(
-            1
-            for r in results
-            if r.get("status") == "ok" and bool(r.get("strand_conflicts"))
-        )
-
-        n_new_consensus = len(decision.get("new_consensus_by_species", {}).get(target_species, []))
-        n_orphan_loci = len(decision.get("orphan_loci_by_species", {}).get(target_species, []))
-        n_pending_frontier = len(decision.get("pending_frontiers_by_species", {}).get(target_species, []))
-
-        targets_summary[target_species] = {
-            "n_processed": n_processed,
-            "n_ok": n_ok,
-            "n_error": n_error,
-            "n_primary": n_primary,
-            "n_alternative_only": n_alternative_only,
-            "n_missing": n_missing,
-            "n_strand_conflict": n_strand_conflict,
-            "n_new_consensus": n_new_consensus,
-            "n_orphan_loci": n_orphan_loci,
-            "n_pending_frontier": n_pending_frontier,
-        }
-
-    summary = {
-        "round_id": round_id,
-        "seed_species": decision["seed_species"],
-        "reference_species": reference_species,
-        "reference_order": decision["reference_order"],
-        "used_reference_species": decision["used_reference_species"],
-        "next_reference_species": decision["next_reference_species"],
-        "stop": decision["stop"],
-        "targets": targets_summary,
-    }
-    return summary
-
-
-def write_round_summary(job, workdir, round_merged_path, decision_path):
-    round_merged = read_json(round_merged_path)
-    decision = read_json(decision_path)
-
-    summary = build_round_summary(round_merged, decision)
-
-    round_id = summary["round_id"]
-    reference_species = summary["reference_species"]
-
-    out_dir = (
-        Path(workdir)
-        / "rounds"
-        / f"round_{round_id:03d}"
-        / f"ref_{reference_species}"
-    )
-
-    json_path = out_dir / "summary.json"
-    write_json(json_path, summary)
-
-    tsv_path = out_dir / "summary.tsv"
-    with open(tsv_path, "w") as fh:
-        fh.write(
-            "\t".join(
-                [
-                    "round_id",
-                    "seed_species",
-                    "reference_species",
-                    "target_species",
-                    "n_processed",
-                    "n_ok",
-                    "n_error",
-                    "n_primary",
-                    "n_alternative_only",
-                    "n_missing",
-                    "n_strand_conflict",
-                    "n_new_consensus",
-                    "n_orphan_loci",
-                    "n_pending_frontier",
-                    "next_reference_species",
-                    "stop",
-                ]
-            )
-            + "\n"
-        )
-
-        for target_species, stats in summary["targets"].items():
-            fh.write(
-                "\t".join(
-                    [
-                        str(summary["round_id"]),
-                        str(summary["seed_species"]),
-                        str(summary["reference_species"]),
-                        str(target_species),
-                        str(stats["n_processed"]),
-                        str(stats["n_ok"]),
-                        str(stats["n_error"]),
-                        str(stats["n_primary"]),
-                        str(stats["n_alternative_only"]),
-                        str(stats["n_missing"]),
-                        str(stats["n_strand_conflict"]),
-                        str(stats["n_new_consensus"]),
-                        str(stats["n_orphan_loci"]),
-                        str(stats["n_pending_frontier"]),
-                        str(summary["next_reference_species"]),
-                        str(summary["stop"]),
-                    ]
-                )
-                + "\n"
-            )
-
-    return str(json_path)
 
 def annotate_missing_loci_and_choose_next(
     job,
@@ -635,19 +655,20 @@ def annotate_missing_loci_and_choose_next(
         if consensuses:
             new_consensus_by_species[target_species] = consensuses
 
+    updated_used = append_unique_preserve_order(used_reference_species, current_reference)
+
     orphan_loci_by_species = {}
     pending_frontiers_by_species = {}
-    source_species_used_so_far = sorted(set(used_reference_species))
 
     for target_species in species_list:
-        if target_species in used_reference_species:
+        if target_species in updated_used:
             orphan_loci_by_species[target_species] = []
             continue
 
         native_loci = species_loci[target_species]
         projected_spans = collect_projected_transcript_spans_for_species(
             transcripts_by_species=transcripts_by_species,
-            source_species_list=source_species_used_so_far,
+            source_species_list=updated_used,
             target_species=target_species,
             hal=hal,
         )
@@ -676,7 +697,7 @@ def annotate_missing_loci_and_choose_next(
         orphan_loci_by_species[target_species] = orphan_loci
 
     for sp in species_list:
-        if sp in used_reference_species:
+        if sp in updated_used:
             continue
 
         pending = []
@@ -709,14 +730,13 @@ def annotate_missing_loci_and_choose_next(
         if pending:
             pending_frontiers_by_species[sp] = pending
 
+    seed_species = updated_used[0]
     tree_newick = get_hal_tree_newick(hal_path)
     reference_order = compute_reference_order(
-        seed_species=used_reference_species[0],
+        seed_species=seed_species,
         species_tree_newick=tree_newick,
         species_list=species_list,
     )
-
-    updated_used = sorted(set(used_reference_species) | {current_reference})
 
     next_reference = pick_next_reference_from_order(
         reference_order=reference_order,
@@ -726,7 +746,7 @@ def annotate_missing_loci_and_choose_next(
 
     out = {
         "round_id": round_id,
-        "seed_species": used_reference_species[0],
+        "seed_species": seed_species,
         "current_reference": current_reference,
         "reference_order": reference_order,
         "used_reference_species": updated_used,
@@ -856,7 +876,6 @@ def schedule_next_round(
         annotation_suffix,
         hal_path,
         species_csv,
-        next_round_id,
         next_ref,
         manifest_job.rv(),
         decision["used_reference_species"],
@@ -895,6 +914,7 @@ def schedule_round_from_manifest(
             annotation_suffix,
             hal_path,
             species_csv,
+            round_id,
             reference_species,
             target,
             manifest_path,
@@ -920,6 +940,7 @@ def schedule_round_from_manifest(
         annotation_suffix,
         hal_path,
         species_csv,
+        round_id,
         reference_species,
         round_merge_job.rv(),
         used_reference_species,
@@ -993,7 +1014,6 @@ def run_round_zero(
         annotation_suffix,
         hal_path,
         species_csv,
-        0,
         seed_species,
         manifest_job.rv(),
         [seed_species],
