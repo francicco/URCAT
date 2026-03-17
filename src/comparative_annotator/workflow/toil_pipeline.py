@@ -363,7 +363,7 @@ def main():
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
-    parser.add_argument("--workDir", required=True)
+    parser.add_argument("--outputDir", required=True)
     parser.add_argument("--seedSpecies", required=True)
     parser.add_argument("--speciesCsv", required=True)
     parser.add_argument("--halPath", required=True)
