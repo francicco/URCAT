@@ -13,6 +13,10 @@ def find_overlapping_species_loci(
     projected: ProjectedTranscript,
     species_loci: list[SpeciesLocus],
 ):
+    """
+    Return all loci overlapping a projected transcript candidate
+    on the same seqid and same strand.
+    """
     hits = []
 
     for locus in species_loci:
@@ -20,6 +24,26 @@ def find_overlapping_species_loci(
             continue
 
         if locus.strand != projected.strand:
+            continue
+
+        if overlaps(projected.start, projected.end, locus.start, locus.end):
+            hits.append(locus)
+
+    return hits
+
+
+def find_overlapping_species_loci_any_strand(
+    projected: ProjectedTranscript,
+    species_loci: list[SpeciesLocus],
+):
+    """
+    Return all loci overlapping a projected transcript candidate
+    on the same seqid, regardless of strand.
+    """
+    hits = []
+
+    for locus in species_loci:
+        if locus.seqid != projected.seqid:
             continue
 
         if overlaps(projected.start, projected.end, locus.start, locus.end):
@@ -90,14 +114,11 @@ def classify_unmatched_projection(
     return "missing_annotation_candidate"
 
 
-def nearest_species_locus(
-    projected: ProjectedTranscript,
-    species_loci: list[SpeciesLocus],
-):
-    """
-    Return the nearest locus on the same seqid, regardless of overlap.
-    """
+def nearest_species_locus(projected, species_loci, same_strand_only=False):
     candidates = [l for l in species_loci if l.seqid == projected.seqid]
+    if same_strand_only:
+        candidates = [l for l in candidates if l.strand == projected.strand]
+
     if not candidates:
         return None, None
 
@@ -117,16 +138,3 @@ def nearest_species_locus(
             best_locus = locus
 
     return best_locus, best_distance
-
-
-def find_overlapping_species_loci_any_strand(projected, species_loci):
-    hits = []
-
-    for locus in species_loci:
-        if locus.seqid != projected.seqid:
-            continue
-
-        if overlaps(projected.start, projected.end, locus.start, locus.end):
-            hits.append(locus)
-
-    return hits
