@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from comparative_annotator.projection.scoring import score_projected_transcript_against_locus
 from comparative_annotator.projection.transcript_ranking import rank_transcripts_within_locus
-from comparative_annotator.projection.matching import (
-    find_overlapping_species_loci,
-    find_overlapping_species_loci_any_strand,
-)
-
+from comparative_annotator.projection.matching import find_candidate_species_loci
 
 def rank_candidate_loci_with_transcripts(
     projected,
