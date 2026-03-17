@@ -593,6 +593,47 @@ def extract_projected_spans_for_target(target_merged_json: dict):
 
     return spans
 
+def collect_projected_transcript_spans_for_species(
+    transcripts_by_species,
+    source_species_list,
+    target_species,
+    hal,
+):
+    spans = []
+
+    for source_species in source_species_list:
+        for tx_id, seed in transcripts_by_species[source_species].items():
+            if source_species == target_species:
+                continue
+
+            projected_exon_blocks = []
+            for exon_start, exon_end in seed.exons:
+                intervals = hal.project_interval(
+                    source_species=seed.species,
+                    target_species=target_species,
+                    seqid=seed.seqid,
+                    start=exon_start,
+                    end=exon_end,
+                    strand=seed.strand,
+                    source_transcript=seed.transcript_id,
+                )
+                projected_exon_blocks.append(intervals)
+
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            for pt in pts:
+                spans.append(
+                    {
+                        "seqid": pt.seqid,
+                        "start": pt.start,
+                        "end": pt.end,
+                        "strand": pt.strand,
+                        "source_species": source_species,
+                        "source_transcript": pt.source_transcript,
+                    }
+                )
+
+    return spans
+
 def main():
     from argparse import ArgumentParser
 
