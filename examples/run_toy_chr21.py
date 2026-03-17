@@ -5,8 +5,8 @@ from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 
 from comparative_annotator.projection.matching import nearest_species_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
-
 from comparative_annotator.projection.reporting import rank_candidate_loci_with_transcripts
+
 
 def main():
     hmel = load_gff3("data/Hmel202001o.test.gff3", species="Hmel")
@@ -59,10 +59,43 @@ def main():
         print(projected_transcripts)
 
         for pt in projected_transcripts:
-            nearest, dist = nearest_species_locus(pt, species_loci[target])
             print("projected transcript:", pt)
+
+            nearest, dist = nearest_species_locus(pt, species_loci[target])
             print("nearest locus:", nearest)
             print("distance:", dist)
+
+            nearest_same, dist_same = nearest_species_locus(
+                pt, species_loci[target], same_strand_only=True
+            )
+            nearest_any, dist_any = nearest_species_locus(
+                pt, species_loci[target], same_strand_only=False
+            )
+
+            print("nearest same-strand locus:", nearest_same)
+            print("same-strand distance:", dist_same)
+            print("nearest any-strand locus:", nearest_any)
+            print("any-strand distance:", dist_any)
+
+            candidate_rows = rank_candidate_loci_with_transcripts(
+                projected=pt,
+                source_transcript=seed,
+                species_loci=species_loci[target],
+                target_transcripts_by_id=transcripts_by_species[target],
+            )
+
+            if candidate_rows:
+                print("candidate loci ranking:")
+                for i, row in enumerate(candidate_rows, start=1):
+                    print(
+                        f"  {i}. {row['locus_id']} "
+                        f"locus_score={row['locus_score']:.3f} "
+                        f"overlap={row['overlap_fraction']:.3f} "
+                        f"proj_score={row['projection_score']:.3f} "
+                        f"same_strand={row['same_strand']} "
+                        f"best_tx={row['best_transcript_id']} "
+                        f"best_tx_score={row['best_transcript_score']}"
+                    )
 
         clocus = infer_comparative_locus(
             seed_transcript=seed,
@@ -79,14 +112,6 @@ def main():
         print("missing:", clocus.missing_annotations)
         print("primary_transcripts:", clocus.primary_transcripts)
         print("alternative_transcripts:", clocus.alternative_transcripts)
-
-        nearest_same, dist_same = nearest_species_locus(pt, species_loci[target], same_strand_only=True)
-        nearest_any, dist_any = nearest_species_locus(pt, species_loci[target], same_strand_only=False)
-
-        print("nearest same-strand locus:", nearest_same)
-        print("same-strand distance:", dist_same)
-        print("nearest any-strand locus:", nearest_any)
-        print("any-strand distance:", dist_any)
         print("=========================================\n")
 
 
