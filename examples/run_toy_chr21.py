@@ -76,6 +76,17 @@ def main():
         print("alternatives:", clocus.alternatives)
         print("strand_conflicts:", clocus.strand_conflicts)
         print("missing:", clocus.missing_annotations)
+        print("primary_transcripts:", clocus.primary_transcripts)
+        print("alternative_transcripts:", clocus.alternative_transcripts)
+
+        nearest_same, dist_same = nearest_species_locus(pt, species_loci[target], same_strand_only=True)
+        nearest_any, dist_any = nearest_species_locus(pt, species_loci[target], same_strand_only=False)
+
+        print("nearest same-strand locus:", nearest_same)
+        print("same-strand distance:", dist_same)
+        print("nearest any-strand locus:", nearest_any)
+        print("any-strand distance:", dist_any)
+        print("=========================================\n")
 
 
 if __name__ == "__main__":
