@@ -85,7 +85,7 @@ def test_reconstruct_splits_when_source_exon_order_breaks():
     )
     tx.finalize()
 
-    # exon 2 projects before exon 1 in target coordinates -> should split
+    # exon 2 projects before exon 1 in target coordinates -> no full clean chain
     projected_exon_blocks = [
         [ProjectionInterval("Dryas", "chr5", 2000, 2050, "+", "Heliconius", "tx1")],
         [ProjectionInterval("Dryas", "chr5", 1000, 1050, "+", "Heliconius", "tx1")],
@@ -94,7 +94,11 @@ def test_reconstruct_splits_when_source_exon_order_breaks():
 
     chains = reconstruct_projected_transcripts(tx, projected_exon_blocks)
 
-    assert len(chains) >= 2
+    assert len(chains) == 1
+    best = chains[0]
+    assert best.coverage == 2
+    assert best.exon_count == 2
+    assert best.chain_score is not None
 
 
 def test_reconstruct_splits_different_targets():
