@@ -31,18 +31,29 @@ def build_comparative_locus_from_projection(
     for proj in projected_transcripts:
         loci_for_species = species_loci.get(proj.species, [])
 
+        # Diagnostic + ranking candidate set:
+        # overlapping loci plus nearest flanking loci.
         candidate_loci = find_candidate_species_loci(
             proj,
             loci_for_species,
             n_flank=2,
         )
 
-        overlapping_any = find_overlapping_species_loci_any_strand(proj, loci_for_species)
+        # True overlaps only.
+        overlapping_any = find_overlapping_species_loci_any_strand(
+            proj,
+            loci_for_species,
+        )
+
+        # Record opposite-strand overlaps as diagnostics.
         for locus in overlapping_any:
             if locus.strand != proj.strand:
                 clocus.add_strand_conflict(proj.species, locus.locus_id)
 
-        if candidate_loci:
+        # Only assign primary/alternatives if there is at least one real overlap.
+        # Flanking loci are useful for diagnostics, but should not become primaries
+        # for clearly missing loci.
+        if overlapping_any:
             best, alternatives = choose_best_locus(
                 projected=proj,
                 source_transcript=source_transcript,
@@ -53,7 +64,10 @@ def build_comparative_locus_from_projection(
                 clocus.set_primary(proj.species, best.locus_id)
 
                 tx_lookup = transcripts_by_species.get(proj.species, {})
-                best_locus_obj = next((l for l in candidate_loci if l.locus_id == best.locus_id), None)
+                best_locus_obj = next(
+                    (l for l in candidate_loci if l.locus_id == best.locus_id),
+                    None,
+                )
 
                 if best_locus_obj is not None and tx_lookup:
                     best_tx, alt_txs = choose_best_transcript_within_locus(
@@ -64,7 +78,10 @@ def build_comparative_locus_from_projection(
                     )
 
                     if best_tx is not None:
-                        clocus.set_primary_transcript(proj.species, best_tx.transcript_id)
+                        clocus.set_primary_transcript(
+                            proj.species,
+                            best_tx.transcript_id,
+                        )
 
                     if alt_txs:
                         clocus.set_alternative_transcripts(
@@ -75,13 +92,13 @@ def build_comparative_locus_from_projection(
             if alternatives:
                 clocus.set_alternatives(
                     proj.species,
-                    [a.locus_id for a in alternatives]
+                    [a.locus_id for a in alternatives],
                 )
 
-        if not overlapping_any:
+        else:
             clocus.add_missing_projection(
                 proj.species,
-                f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}"
+                f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}",
             )
 
     return clocus
