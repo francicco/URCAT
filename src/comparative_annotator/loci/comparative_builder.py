@@ -3,14 +3,13 @@ from __future__ import annotations
 from comparative_annotator.models.comparative import ComparativeLocus
 from comparative_annotator.projection.adjudication import choose_best_locus
 from comparative_annotator.projection.matching import (
-    find_overlapping_species_loci,
     find_overlapping_species_loci_any_strand,
     find_candidate_species_loci,
 )
-
 from comparative_annotator.projection.transcript_ranking import (
     choose_best_transcript_within_locus,
 )
+
 
 def build_comparative_locus_from_projection(
     seed_species,
@@ -32,7 +31,6 @@ def build_comparative_locus_from_projection(
     for proj in projected_transcripts:
         loci_for_species = species_loci.get(proj.species, [])
 
-        # Prefer same-strand overlaps, but do not exclude opposite-strand overlaps.
         candidate_loci = find_candidate_species_loci(
             proj,
             loci_for_species,
@@ -80,11 +78,10 @@ def build_comparative_locus_from_projection(
                     [a.locus_id for a in alternatives]
                 )
 
-            continue
-
-        clocus.add_missing_projection(
-            proj.species,
-            f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}"
-        )
+        if not overlapping_any:
+            clocus.add_missing_projection(
+                proj.species,
+                f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}"
+            )
 
     return clocus
