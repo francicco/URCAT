@@ -4,6 +4,12 @@ from comparative_annotator.projection.scoring import score_projected_transcript_
 from comparative_annotator.projection.transcript_ranking import rank_transcripts_within_locus
 from comparative_annotator.projection.matching import find_candidate_species_loci
 
+from comparative_annotator.projection.matching import (
+    find_candidate_species_loci,
+    locus_relation_to_projection,
+    locus_distance_to_projection,
+)
+
 def rank_candidate_loci_with_transcripts(
     projected,
     source_transcript,
