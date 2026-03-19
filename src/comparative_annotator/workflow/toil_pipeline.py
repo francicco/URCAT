@@ -25,6 +25,7 @@ from comparative_annotator.workflow.progressive import (
     pick_next_reference_from_order,
 )
 
+from comparative_annotator.workflow.orthology_edges import build_target_edge_evidence
 
 @dataclass
 class FrontierSeedTranscript:
@@ -553,6 +554,21 @@ def merge_target_results(job, workdir, round_id, reference_species, target_speci
     write_json(out_path, merged)
     return str(out_path)
 
+def run_target_edge_evidence(
+    job,
+    workdir,
+    annotation_dir,
+    annotation_suffix,
+    species_csv,
+    merged_target_path,
+):
+    return build_target_edge_evidence(
+        workdir=workdir,
+        annotation_dir=annotation_dir,
+        annotation_suffix=annotation_suffix,
+        species_csv=species_csv,
+        merged_target_path=merged_target_path,
+    )
 
 def merge_round_results(job, workdir, round_id, reference_species, merged_target_paths):
     merged_targets = [read_json(p) for p in merged_target_paths]
@@ -827,6 +843,18 @@ def schedule_target_batches(
         memory="2G",
         disk="2G",
     )
+
+    edge_job = merge_job.addFollowOnJobFn(
+        run_target_edge_evidence,
+        workdir,
+        annotation_dir,
+        annotation_suffix,
+        species_csv,
+        merge_job.rv(),
+        memory="4G",
+        disk="4G",
+    )
+
     return merge_job.rv()
 
 
