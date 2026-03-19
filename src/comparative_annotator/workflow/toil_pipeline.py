@@ -554,6 +554,8 @@ def merge_target_results(job, workdir, round_id, reference_species, target_speci
     write_json(out_path, merged)
     return str(out_path)
 
+def run_target_edge_evidence(...)
+
 def run_target_edge_evidence(
     job,
     workdir,
