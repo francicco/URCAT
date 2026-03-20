@@ -30,7 +30,7 @@ def read_fasta(path: str) -> dict[str, str]:
 
 def hal_to_fasta(hal_path: str, species: str, out_fa: str):
     out_fa = Path(out_fa)
-    tmp_fa = out_fa.with_suffix(out_fa.suffix + ".tmp")
+    tmp_fa = out_fa.with_suffix(out_fa.suffix + ".raw")
 
     if out_fa.exists():
         with open(out_fa) as fh:
@@ -49,15 +49,16 @@ def hal_to_fasta(hal_path: str, species: str, out_fa: str):
         with open(tmp_fa, "w") as out:
             subprocess.run(cmd, stdout=out, check=True)
 
-        with open(tmp_fa) as fh:
+        seqs = read_fasta(str(tmp_fa))
+        if not seqs:
+            raise RuntimeError(f"hal2fasta produced no sequences for {species}")
+
+        write_fasta(str(out_fa), seqs)
+
+        with open(out_fa) as fh:
             first = fh.read(1)
-
         if first != ">":
-            raise RuntimeError(
-                f"hal2fasta did not produce a valid FASTA for species {species}: {tmp_fa}"
-            )
-
-        tmp_fa.replace(out_fa)
+            raise RuntimeError(f"Canonical FASTA rewrite failed for {species}: {out_fa}")
 
     finally:
         if tmp_fa.exists():
