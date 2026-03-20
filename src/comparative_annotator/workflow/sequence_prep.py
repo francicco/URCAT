@@ -170,10 +170,13 @@ def load_all_species_sequences(
             species=sp,
         )
 
+        aa_seqs, aa_qc = read_protein_fasta_with_qc(paths["aa"])
+
         seqs[sp] = {
             "mrna": read_fasta(paths["mrna"]),
             "cds": read_fasta(paths["cds"]),
-            aa_seqs, aa_qc = read_protein_fasta_with_qc(paths["aa"]),
+            "aa": aa_seqs,
+            "aa_qc": aa_qc,
         }
 
     return seqs
