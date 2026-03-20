@@ -45,6 +45,23 @@ def hal_to_fasta(hal_path: str, species: str, out_fa: str):
 
 def run_gffread(gff: str, genome_fa: str, prefix: str):
     mrna = f"{prefix}.mrna.fa"
+    cds = f"{prefix}.cds.fa"
+    aa = f"{prefix}.aa.fa"
+
+    if Path(aa).exists() and Path(cds).exists() and Path(mrna).exists():
+        return mrna, cds, aa
+
+    cmd = [
+        "gffread",
+        gff,
+        "-g", genome_fa,
+        "-w", mrna,
+        "-x", cds,
+        "-y", aa,
+    ]
+    subprocess.run(cmd, check=True)
+
+    return mrna, cds, aa
 
 
 def run_diamond(
