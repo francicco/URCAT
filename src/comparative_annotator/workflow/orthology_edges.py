@@ -152,8 +152,8 @@ def remap_source_locus_ids_from_source_transcripts(
     species_loci: dict[str, list[SpeciesLocus]],
 ) -> list[tuple[str, str, str, str, str, Interval | None]]:
     """
-    merged_target results refer to source_transcript, not source_locus_id.
-    Convert transcript IDs to source locus IDs using species_loci membership.
+    candidate_pairs stores source transcript IDs in the 2nd field.
+    Convert them to source locus IDs using locus transcript membership.
     """
     tx_to_locus: dict[tuple[str, str], str] = {}
 
@@ -162,26 +162,9 @@ def remap_source_locus_ids_from_source_transcripts(
             for tx_id in locus.transcripts:
                 tx_to_locus[(species, tx_id)] = locus.locus_id
 
-    source_tx_by_result_key: dict[tuple[str, str], str] = {}
-    for r in merged_target["results"]:
-        if r.get("status") != "ok":
-            continue
-        source_species = r.get("source_species")
-        source_tx = r.get("source_transcript")
-        target_species = r.get("target_species")
-        if source_species and source_tx and target_species:
-            source_tx_by_result_key[(source_species, target_species)] = source_tx
-
     out = []
-    for source_species, source_label, target_species, target_locus_id, edge_origin, projected_interval in candidate_pairs:
-        source_locus_id = None
-
-        if (source_species, source_label) in tx_to_locus:
-            source_locus_id = tx_to_locus[(source_species, source_label)]
-        elif (source_species, target_species) in source_tx_by_result_key:
-            source_tx = source_tx_by_result_key[(source_species, target_species)]
-            source_locus_id = tx_to_locus.get((source_species, source_tx))
-
+    for source_species, source_tx_id, target_species, target_locus_id, edge_origin, projected_interval in candidate_pairs:
+        source_locus_id = tx_to_locus.get((source_species, source_tx_id))
         if source_locus_id is None:
             continue
 
