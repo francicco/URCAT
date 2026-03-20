@@ -290,7 +290,7 @@ def build_target_edge_evidence(
         loci_by_species=species_loci,
         transcripts_by_species=build_transcript_lookup(transcripts_by_species),
         candidate_pairs=candidate_pairs,
-        anchor_map=anchor_map
+        anchor_map=anchor_map,
         sequences_by_species=sequences_by_species,
     )
 
