@@ -307,7 +307,7 @@ class FeatureComputer:
             ),
         }
 
-     def compute_sequence_features(
+    def compute_sequence_features(
         self,
         source_species: str,
         source_locus: SpeciesLocus,
