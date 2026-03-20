@@ -566,6 +566,7 @@ def run_target_edge_evidence(
         workdir=workdir,
         annotation_dir=annotation_dir,
         annotation_suffix=annotation_suffix,
+        hal_path=hal_path,
         species_csv=species_csv,
         merged_target_path=merged_target_path,
     )
