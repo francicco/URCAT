@@ -12,7 +12,11 @@ from comparative_annotator.orthology.edge_model import (
     build_and_classify_edges,
 )
 
-from comparative_annotator.workflow.sequence_prep import load_all_species_sequences
+from comparative_annotator.sequence.sequence_prep import (
+    prepare_diamond_inputs,
+    run_diamond,
+    load_diamond_results,
+)
 
 def read_json(path):
     import json
