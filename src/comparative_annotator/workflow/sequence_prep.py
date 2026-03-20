@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import uuid
 from pathlib import Path
 
 
@@ -30,35 +32,35 @@ def read_fasta(path: str) -> dict[str, str]:
 
 def hal_to_fasta(hal_path: str, species: str, out_fa: str):
     out_fa = Path(out_fa)
-    tmp_fa = out_fa.with_suffix(out_fa.suffix + ".raw")
 
-    if out_fa.exists():
+    if out_fa.exists() and out_fa.stat().st_size > 0:
         with open(out_fa) as fh:
             first = fh.read(1)
         if first == ">":
             return
-        out_fa.unlink()
 
-    cmd = [
-        "hal2fasta",
-        hal_path,
-        species,
-    ]
+    tmp_fa = out_fa.with_name(f"{out_fa.name}.{uuid.uuid4().hex}.tmp")
 
     try:
         with open(tmp_fa, "w") as out:
-            subprocess.run(cmd, stdout=out, check=True)
+            subprocess.run(
+                ["hal2fasta", hal_path, species],
+                stdout=out,
+                check=True,
+            )
 
         seqs = read_fasta(str(tmp_fa))
         if not seqs:
             raise RuntimeError(f"hal2fasta produced no sequences for {species}")
 
-        write_fasta(str(out_fa), seqs)
+        write_fasta(str(tmp_fa), seqs)
 
-        with open(out_fa) as fh:
+        with open(tmp_fa) as fh:
             first = fh.read(1)
         if first != ">":
-            raise RuntimeError(f"Canonical FASTA rewrite failed for {species}: {out_fa}")
+            raise RuntimeError(f"Canonical FASTA rewrite failed for {species}: {tmp_fa}")
+
+        os.replace(tmp_fa, out_fa)
 
     finally:
         if tmp_fa.exists():
@@ -66,12 +68,18 @@ def hal_to_fasta(hal_path: str, species: str, out_fa: str):
 
 
 def run_gffread(gff: str, genome_fa: str, prefix: str):
-    mrna = f"{prefix}.mrna.fa"
-    cds = f"{prefix}.cds.fa"
-    aa = f"{prefix}.aa.fa"
+    mrna = Path(f"{prefix}.mrna.fa")
+    cds = Path(f"{prefix}.cds.fa")
+    aa = Path(f"{prefix}.aa.fa")
 
-    if Path(aa).exists() and Path(cds).exists() and Path(mrna).exists():
-        return mrna, cds, aa
+    if mrna.exists() and cds.exists() and aa.exists():
+        if mrna.stat().st_size > 0 and cds.stat().st_size > 0 and aa.stat().st_size > 0:
+            return str(mrna), str(cds), str(aa)
+
+    tmp_tag = uuid.uuid4().hex
+    mrna_tmp = mrna.with_name(f"{mrna.name}.{tmp_tag}.tmp")
+    cds_tmp = cds.with_name(f"{cds.name}.{tmp_tag}.tmp")
+    aa_tmp = aa.with_name(f"{aa.name}.{tmp_tag}.tmp")
 
     with open(genome_fa) as fh:
         first = fh.read(1)
@@ -82,13 +90,26 @@ def run_gffread(gff: str, genome_fa: str, prefix: str):
         "gffread",
         gff,
         "-g", genome_fa,
-        "-w", mrna,
-        "-x", cds,
-        "-y", aa,
+        "-w", str(mrna_tmp),
+        "-x", str(cds_tmp),
+        "-y", str(aa_tmp),
     ]
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
 
-    return mrna, cds, aa
+        if not (mrna_tmp.exists() and cds_tmp.exists() and aa_tmp.exists()):
+            raise RuntimeError("gffread did not produce all expected output files")
+
+        os.replace(mrna_tmp, mrna)
+        os.replace(cds_tmp, cds)
+        os.replace(aa_tmp, aa)
+
+    finally:
+        for p in (mrna_tmp, cds_tmp, aa_tmp):
+            if p.exists():
+                p.unlink()
+
+    return str(mrna), str(cds), str(aa)
 
 
 def run_diamond(
@@ -97,25 +118,42 @@ def run_diamond(
     out_tsv: str,
     tmp_prefix: str,
 ):
-    db_path = f"{tmp_prefix}.dmnd"
+    out_tsv = Path(out_tsv)
+    if out_tsv.exists() and out_tsv.stat().st_size > 0:
+        return
+
+    tag = uuid.uuid4().hex
+    db_prefix = f"{tmp_prefix}.{tag}"
+    out_tmp = out_tsv.with_name(f"{out_tsv.name}.{tag}.tmp")
 
     subprocess.run(
-        ["diamond", "makedb", "--in", target_fa, "-d", db_path],
+        ["diamond", "makedb", "--in", target_fa, "-d", db_prefix],
         check=True,
     )
 
-    subprocess.run(
-        [
-            "diamond", "blastp",
-            "-d", db_path,
-            "-q", query_fa,
-            "-o", out_tsv,
-            "--outfmt", "6", "qseqid", "sseqid", "pident", "length", "bitscore",
-            "--max-target-seqs", "5",
-            "--evalue", "1e-5",
-        ],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "diamond", "blastp",
+                "-d", db_prefix,
+                "-q", query_fa,
+                "-o", str(out_tmp),
+                "--outfmt", "6", "qseqid", "sseqid", "pident", "length", "bitscore",
+                "--max-target-seqs", "5",
+                "--evalue", "1e-5",
+            ],
+            check=True,
+        )
+
+        os.replace(out_tmp, out_tsv)
+
+    finally:
+        if out_tmp.exists():
+            out_tmp.unlink()
+        for suffix in (".dmnd",):
+            p = Path(f"{db_prefix}{suffix}")
+            if p.exists():
+                p.unlink()
 
 
 def prepare_species_sequences(
