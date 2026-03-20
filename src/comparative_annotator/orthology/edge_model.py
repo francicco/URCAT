@@ -634,6 +634,11 @@ class RuleBasedEdgeClassifier:
 
         better_syntenic_competitor = self._has_better_syntenic_competitor(edge, competing_edges)
 
+        strong_sequence_only = (
+            (s.get("prot_cov") is not None and s.get("prot_cov") >= 0.8) and
+            (s.get("prot_id") is not None and s.get("prot_id") >= 0.8)
+        )
+
         if not projection_pass and not sequence_pass and y.get("synteny_class") == "none":
             return "N", "low", False
 
@@ -654,6 +659,9 @@ class RuleBasedEdgeClassifier:
 
         if projection_pass and sequence_pass and synteny_pass:
             return "C", "medium", True
+
+        if strong_sequence_only and not better_syntenic_competitor:
+            return "E", "medium", True
 
         if sequence_pass and not synteny_pass:
             return "P", "low", False
