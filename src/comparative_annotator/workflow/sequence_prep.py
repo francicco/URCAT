@@ -99,13 +99,11 @@ def run_diamond(
 ):
     db_path = f"{tmp_prefix}.dmnd"
 
-    # build DB
     subprocess.run(
         ["diamond", "makedb", "--in", target_fa, "-d", db_path],
         check=True,
     )
 
-    # run search
     subprocess.run(
         [
             "diamond", "blastp",
@@ -118,23 +116,6 @@ def run_diamond(
         ],
         check=True,
     )
-    cds = f"{prefix}.cds.fa"
-    aa = f"{prefix}.aa.fa"
-
-    if Path(aa).exists() and Path(cds).exists() and Path(mrna).exists():
-        return mrna, cds, aa
-
-    cmd = [
-        "gffread",
-        gff,
-        "-g", genome_fa,
-        "-w", mrna,
-        "-x", cds,
-        "-y", aa,
-    ]
-    subprocess.run(cmd, check=True)
-
-    return mrna, cds, aa
 
 
 def prepare_species_sequences(
