@@ -248,6 +248,7 @@ def build_target_edge_evidence(
     workdir: str,
     annotation_dir: str,
     annotation_suffix: str,
+    hal_path: str,
     species_csv: str,
     merged_target_path: str,
 ) -> str:
