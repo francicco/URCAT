@@ -29,7 +29,8 @@ def read_fasta(path: str) -> dict[str, str]:
 
 
 def hal_to_fasta(hal_path: str, species: str, out_fa: str):
-    if Path(out_fa).exists():
+    out_fa = Path(out_fa)
+    if out_fa.exists():
         return
 
     cmd = [
@@ -87,6 +88,7 @@ def prepare_species_sequences(
         "aa": aa,
     }
 
+
 def sanitize_protein_sequence(seq: str) -> tuple[str, dict]:
     seq = seq.strip().upper()
 
@@ -121,6 +123,7 @@ def sanitize_protein_sequence(seq: str) -> tuple[str, dict]:
 
     return seq, flags
 
+
 def read_protein_fasta_with_qc(path: str) -> tuple[dict[str, str], dict[str, dict]]:
     seqs = {}
     qc = {}
@@ -152,6 +155,7 @@ def read_protein_fasta_with_qc(path: str) -> tuple[dict[str, str], dict[str, dic
 
     return seqs, qc
 
+
 def load_all_species_sequences(
     hal_path: str,
     annotation_dir: str,
@@ -180,6 +184,7 @@ def load_all_species_sequences(
         }
 
     return seqs
+
 
 def write_fasta(path: str, seqs: dict[str, str]):
     with open(path, "w") as fh:
