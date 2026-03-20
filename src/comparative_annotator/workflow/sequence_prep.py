@@ -87,6 +87,70 @@ def prepare_species_sequences(
         "aa": aa,
     }
 
+def sanitize_protein_sequence(seq: str) -> tuple[str, dict]:
+    seq = seq.strip().upper()
+
+    flags = {
+        "had_terminal_stop": False,
+        "had_internal_stop": False,
+        "had_invalid_chars": False,
+        "is_empty_after_cleaning": False,
+    }
+
+    if seq.endswith(".") or seq.endswith("*"):
+        flags["had_terminal_stop"] = True
+        seq = seq[:-1]
+
+    if "." in seq or "*" in seq:
+        flags["had_internal_stop"] = True
+        seq = seq.replace(".", "").replace("*", "")
+
+    allowed = set("ACDEFGHIKLMNPQRSTVWYX")
+    cleaned = []
+    for aa in seq:
+        if aa in allowed:
+            cleaned.append(aa)
+        else:
+            flags["had_invalid_chars"] = True
+            cleaned.append("X")
+
+    seq = "".join(cleaned)
+
+    if not seq:
+        flags["is_empty_after_cleaning"] = True
+
+    return seq, flags
+
+def read_protein_fasta_with_qc(path: str) -> tuple[dict[str, str], dict[str, dict]]:
+    seqs = {}
+    qc = {}
+
+    name = None
+    chunks = []
+
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if name is not None:
+                    raw = "".join(chunks)
+                    clean, flags = sanitize_protein_sequence(raw)
+                    seqs[name] = clean
+                    qc[name] = flags
+                name = line[1:].split()[0]
+                chunks = []
+            else:
+                chunks.append(line)
+
+    if name is not None:
+        raw = "".join(chunks)
+        clean, flags = sanitize_protein_sequence(raw)
+        seqs[name] = clean
+        qc[name] = flags
+
+    return seqs, qc
 
 def load_all_species_sequences(
     hal_path: str,
@@ -109,7 +173,28 @@ def load_all_species_sequences(
         seqs[sp] = {
             "mrna": read_fasta(paths["mrna"]),
             "cds": read_fasta(paths["cds"]),
-            "aa": read_fasta(paths["aa"]),
+            aa_seqs, aa_qc = read_protein_fasta_with_qc(paths["aa"]),
         }
 
     return seqs
+
+def write_fasta(path: str, seqs: dict[str, str]):
+    with open(path, "w") as fh:
+        for name, seq in seqs.items():
+            if not seq:
+                continue
+            fh.write(f">{name}\n")
+            for i in range(0, len(seq), 60):
+                fh.write(seq[i:i+60] + "\n")
+
+
+def filter_aa_for_diamond(aa_seqs: dict[str, str], aa_qc: dict[str, dict]) -> dict[str, str]:
+    out = {}
+    for tx_id, seq in aa_seqs.items():
+        flags = aa_qc.get(tx_id, {})
+        if flags.get("is_empty_after_cleaning"):
+            continue
+        if flags.get("had_internal_stop"):
+            continue
+        out[tx_id] = seq
+    return out
