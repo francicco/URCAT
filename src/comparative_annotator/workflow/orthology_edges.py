@@ -112,10 +112,7 @@ def collect_candidate_pairs_from_merged_target(
             continue
 
         projected_interval = None
-        missing_payloads = r.get("missing_annotations") or []
-        if missing_payloads:
-            projected_interval = interval_from_missing_annotation_payload(missing_payloads[0])
-
+        
         primary = r.get("primary") or {}
         primary_target_locus = primary.get(target_species)
 
