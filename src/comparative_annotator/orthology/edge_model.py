@@ -115,6 +115,16 @@ def jaccard_sets(a: set[str], b: set[str]) -> float | None:
     return len(a & b) / len(union)
 
 
+def _simple_identity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    L = min(len(a), len(b))
+    if L == 0:
+        return 0.0
+    matches = sum(1 for i in range(L) if a[i] == b[i])
+    return matches / L
+
+
 class OrthologyIndexer:
     """
     Per-species locus ordering and neighborhood lookup.
@@ -195,22 +205,20 @@ class OrthologyIndexer:
 
 class FeatureComputer:
     """
-    First-pass feature computation for orthology edges.
-
-    This version is intentionally conservative and repo-compatible.
-    Real protein/CDS alignment and reciprocal projection support can be
-    plugged in later without changing the calling interface.
+    Feature computation for orthology edges.
     """
 
     def __init__(
         self,
-        indexer: OrthologyIndexer,
+        loci_by_species: dict[str, list[SpeciesLocus]],
         transcripts_by_species: dict[str, dict[str, CandidateTranscript]] | None = None,
         anchor_map: AnchorMap | None = None,
+        sequences_by_species: dict[str, dict[str, dict[str, str]]] | None = None,
     ) -> None:
-        self.indexer = indexer
+        self.indexer = OrthologyIndexer(loci_by_species)
         self.transcripts_by_species = transcripts_by_species or {}
         self.anchor_map = anchor_map or AnchorMap()
+        self.sequences_by_species = sequences_by_species or {}
 
     def build_edge(
         self,
@@ -287,9 +295,15 @@ class FeatureComputer:
 
         return {
             "cov": proj_cov,
-            "same_strand": (projected_interval is None or projected_interval.strand is None or projected_interval.strand == target_locus.strand),
+            "same_strand": (
+                projected_interval is None
+                or projected_interval.strand is None
+                or projected_interval.strand == target_locus.strand
+            ),
             "anchor_distance": anchor_distance,
-            "projected_seqid_match": (projected_interval is None or projected_interval.seqid == target_locus.seqid),
+            "projected_seqid_match": (
+                projected_interval is None or projected_interval.seqid == target_locus.seqid
+            ),
         }
 
     def compute_sequence_features(
@@ -302,23 +316,37 @@ class FeatureComputer:
         src_txs = self._get_locus_transcripts(source_species, source_locus)
         tgt_txs = self._get_locus_transcripts(target_species, target_locus)
 
-        src_best_cds = max((tx.cds_length for tx in src_txs), default=0)
-        tgt_best_cds = max((tx.cds_length for tx in tgt_txs), default=0)
+        src_aa = self.sequences_by_species.get(source_species, {}).get("aa", {})
+        tgt_aa = self.sequences_by_species.get(target_species, {}).get("aa", {})
 
-        if src_best_cds == 0 or tgt_best_cds == 0:
-            prot_cov = None
-            prot_id = None
-        else:
-            ratio = min(src_best_cds, tgt_best_cds) / max(src_best_cds, tgt_best_cds)
-            prot_cov = ratio
-            prot_id = ratio
+        best = 0.0
+        best_pair = (None, None)
+
+        for s in src_txs:
+            s_seq = src_aa.get(s.transcript_id)
+            if not s_seq:
+                continue
+
+            for t in tgt_txs:
+                t_seq = tgt_aa.get(t.transcript_id)
+                if not t_seq:
+                    continue
+
+                score = _simple_identity(s_seq, t_seq)
+                if score > best:
+                    best = score
+                    best_pair = (s.transcript_id, t.transcript_id)
+
+        has_sequences = best_pair != (None, None)
 
         return {
-            "prot_cov": prot_cov,
-            "prot_id": prot_id,
+            "prot_cov": best if has_sequences else None,
+            "prot_id": best if has_sequences else None,
             "best_hit_margin": None,
-            "cds_intact": True,
-            "cds_complete": (src_best_cds > 0 and tgt_best_cds > 0),
+            "cds_intact": True if has_sequences else None,
+            "cds_complete": True if has_sequences else None,
+            "best_source_tx": best_pair[0],
+            "best_target_tx": best_pair[1],
         }
 
     def compute_architecture_features(
@@ -761,23 +789,13 @@ def build_and_classify_edges(
     transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
     candidate_pairs: list[tuple[str, str, str, str, str, Interval | None]],
     anchor_map: AnchorMap | None = None,
+    sequences_by_species: dict[str, dict[str, dict[str, str]]] | None = None,
 ) -> tuple[list[CandidateEdge], dict[str, list[set[tuple[str, str]]]]]:
-    """
-    candidate_pairs rows:
-        (
-            source_species,
-            source_locus_id,
-            target_species,
-            target_locus_id,
-            edge_origin,
-            projected_interval,
-        )
-    """
-    indexer = OrthologyIndexer(loci_by_species)
-    feature_computer = FeatureComputer(
-        indexer=indexer,
+    fc = FeatureComputer(
+        loci_by_species=loci_by_species,
         transcripts_by_species=transcripts_by_species,
         anchor_map=anchor_map,
+        sequences_by_species=sequences_by_species,
     )
 
     edges = []
@@ -789,7 +807,7 @@ def build_and_classify_edges(
         edge_origin,
         projected_interval,
     ) in candidate_pairs:
-        edge = feature_computer.build_edge(
+        edge = fc.build_edge(
             source_species=source_species,
             source_locus_id=source_locus_id,
             target_species=target_species,
