@@ -350,9 +350,10 @@ class FeatureComputer:
             }
 
         src_len = len(src_aa.get(best_pair[0], ""))
-
+        prot_cov = min(1.0, best_hit["aln_len"] / max(1, src_len))
+        
         return {
-            "prot_cov": best_hit["aln_len"] / max(1, src_len),
+            "prot_cov": prot_cov,
             "prot_id": best_hit["pid"],
             "bitscore": best_hit["bitscore"],
             "best_hit_margin": None,
