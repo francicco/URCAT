@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from comparative_annotator.io.gff3 import load_gff3
@@ -11,28 +12,44 @@ from comparative_annotator.orthology.edge_model import (
     Interval,
     build_and_classify_edges,
 )
-
-from comparative_annotator.sequence.sequence_prep import (
+from comparative_annotator.workflow.sequence_prep import (
+    load_all_species_sequences,
     prepare_diamond_inputs,
     run_diamond,
     load_diamond_results,
 )
 
-def read_json(path):
-    import json
 
+def read_json(path):
     path = Path(path)
     with open(path) as fh:
         return json.load(fh)
 
 
 def write_json(path, obj):
-    import json
-
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as fh:
         json.dump(obj, fh, indent=2, sort_keys=True)
+
+
+def write_edge_rows_tsv(path: str, edge_rows: list[dict]):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not edge_rows:
+        with open(path, "w") as fh:
+            fh.write("")
+        return
+
+    columns = sorted({k for row in edge_rows for k in row.keys()})
+    with open(path, "w") as fh:
+        fh.write("\t".join(columns) + "\n")
+        for row in edge_rows:
+            fh.write(
+                "\t".join("" if row.get(col) is None else str(row.get(col)) for col in columns)
+                + "\n"
+            )
 
 
 def load_transcripts_for_species(annotation_dir: str, annotation_suffix: str, species: str):
@@ -45,6 +62,26 @@ def load_all_transcripts(annotation_dir: str, annotation_suffix: str, species_li
         sp: load_transcripts_for_species(annotation_dir, annotation_suffix, sp)
         for sp in species_list
     }
+
+
+def build_all_species_loci(
+    transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
+) -> dict[str, list[SpeciesLocus]]:
+    return {
+        sp: build_species_loci(list(txdict.values()), species=sp)
+        for sp, txdict in transcripts_by_species.items()
+    }
+
+
+def build_transcript_lookup(
+    transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
+) -> dict[str, dict[str, CandidateTranscript]]:
+    return transcripts_by_species
+
+
+def build_empty_anchor_map() -> AnchorMap:
+    return AnchorMap(locus_to_anchor={})
+
 
 def canonicalize_transcript_id(tx_id: str | None) -> str | None:
     if tx_id is None:
@@ -65,33 +102,35 @@ def infer_locus_id_from_transcript_id(tx_id: str | None) -> str | None:
         return tx_id.rsplit(".", 1)[0]
     return tx_id
 
-def build_all_species_loci(
-    transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
-) -> dict[str, list[SpeciesLocus]]:
-    species_loci = {}
-    for sp, txdict in transcripts_by_species.items():
-        species_loci[sp] = build_species_loci(list(txdict.values()), species=sp)
-    return species_loci
 
-
-def build_transcript_lookup(
-    transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
-) -> dict[str, dict[str, CandidateTranscript]]:
-    return transcripts_by_species
-
-
-def build_empty_anchor_map() -> AnchorMap:
-    return AnchorMap(locus_to_anchor={})
-
-
-def interval_from_missing_annotation_payload(payload: dict) -> Interval | None:
-    seqid = payload.get("seqid")
-    start = payload.get("start")
-    end = payload.get("end")
-    strand = payload.get("strand")
-    if seqid is None or start is None or end is None:
+def parse_missing_annotation_token(token: str | None) -> Interval | None:
+    """
+    Parse strings like:
+      Diul2100:6310-6731:+
+      Eisa2100:1492633-1492980:+
+    """
+    if token is None:
         return None
-    return Interval(seqid=seqid, start=int(start), end=int(end), strand=strand)
+
+    try:
+        seqid, coords, strand = token.split(":")
+        start_s, end_s = coords.split("-")
+        return Interval(
+            seqid=seqid,
+            start=int(start_s),
+            end=int(end_s),
+            strand=strand,
+        )
+    except Exception:
+        return None
+
+
+def first_missing_interval_for_target(result_row: dict, target_species: str) -> Interval | None:
+    missing = result_row.get("missing_annotations") or {}
+    tokens = missing.get(target_species) or []
+    if not tokens:
+        return None
+    return parse_missing_annotation_token(tokens[0])
 
 
 def collect_candidate_pairs_from_merged_target(
@@ -102,15 +141,10 @@ def collect_candidate_pairs_from_merged_target(
     Convert one target merged.json block into candidate_pairs expected by
     build_and_classify_edges().
 
-    Current conservative policy:
-    - use primary target locus as the main accepted candidate
-    - add alternative target loci as additional candidates
-    - use missing_annotations payload as projected interval hint when available
-
     candidate_pairs rows:
       (
         source_species,
-        source_locus_id,
+        source_transcript_id,
         target_species,
         target_locus_id,
         edge_origin,
@@ -131,19 +165,23 @@ def collect_candidate_pairs_from_merged_target(
             continue
 
         source_species = r.get("source_species")
-        if source_species is None:
+        source_transcript = r.get("source_transcript")
+        if source_species is None or source_transcript is None:
             continue
 
-        projected_interval = None
-        
+        projected_interval = first_missing_interval_for_target(r, target_species)
+
         primary = r.get("primary") or {}
         primary_target_locus = primary.get(target_species)
 
-        if primary_target_locus and primary_target_locus in locus_ids_by_species.get(target_species, set()):
+        if (
+            primary_target_locus is not None
+            and primary_target_locus in locus_ids_by_species.get(target_species, set())
+        ):
             candidate_pairs.append(
                 (
                     source_species,
-                    r.get("source_transcript"),
+                    source_transcript,
                     target_species,
                     primary_target_locus,
                     "primary",
@@ -157,7 +195,7 @@ def collect_candidate_pairs_from_merged_target(
             candidate_pairs.append(
                 (
                     source_species,
-                    r.get("source_transcript"),
+                    source_transcript,
                     target_species,
                     alt_locus_id,
                     "alternative",
@@ -201,15 +239,12 @@ def remap_source_locus_ids_from_source_transcripts(
     for source_species, source_tx_id, target_species, target_locus_id, edge_origin, projected_interval in candidate_pairs:
         source_locus_id = None
 
-        # 1. direct lookup
         source_locus_id = tx_to_locus.get((source_species, source_tx_id))
 
-        # 2. canonicalized transcript ID
         if source_locus_id is None:
             norm_tx = canonicalize_transcript_id(source_tx_id)
             source_locus_id = tx_to_locus.get((source_species, norm_tx))
 
-        # 3. infer locus ID directly from transcript ID
         if source_locus_id is None:
             inferred_locus = infer_locus_id_from_transcript_id(source_tx_id)
             if inferred_locus in locus_ids_by_species.get(source_species, set()):
@@ -232,20 +267,52 @@ def remap_source_locus_ids_from_source_transcripts(
     return out
 
 
-def write_edge_rows_tsv(path: str, edge_rows: list[dict]):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def build_diamond_cache_for_target(
+    workdir: str,
+    target_species: str,
+    source_species_list: list[str],
+    sequences_by_species: dict[str, dict[str, dict[str, str]]],
+) -> dict[tuple[str, str], dict[tuple[str, str], dict]]:
+    """
+    Build/load DIAMOND hits for each source->target pair.
 
-    if not edge_rows:
-        with open(path, "w") as fh:
-            fh.write("")
-        return
+    Returns:
+      {
+        (source_species, target_species): {
+          (qseqid, sseqid): {"pid": ..., "aln_len": ..., "bitscore": ...}
+        }
+      }
+    """
+    cache_dir = Path(workdir) / "diamond_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    columns = sorted({k for row in edge_rows for k in row.keys()})
-    with open(path, "w") as fh:
-        fh.write("\t".join(columns) + "\n")
-        for row in edge_rows:
-            fh.write("\t".join("" if row.get(col) is None else str(row.get(col)) for col in columns) + "\n")
+    diamond_cache = {}
+
+    for source_species in sorted(set(source_species_list)):
+        if source_species == target_species:
+            continue
+
+        src_fa, tgt_fa = prepare_diamond_inputs(
+            cache_dir=str(cache_dir),
+            source_species=source_species,
+            target_species=target_species,
+            sequences_by_species=sequences_by_species,
+        )
+
+        out_tsv = cache_dir / f"{source_species}_vs_{target_species}.tsv"
+        tmp_prefix = str(cache_dir / f"{source_species}_vs_{target_species}")
+
+        if not out_tsv.exists():
+            run_diamond(
+                query_fa=src_fa,
+                target_fa=tgt_fa,
+                out_tsv=str(out_tsv),
+                tmp_prefix=tmp_prefix,
+            )
+
+        diamond_cache[(source_species, target_species)] = load_diamond_results(str(out_tsv))
+
+    return diamond_cache
 
 
 def build_target_edge_evidence(
@@ -258,12 +325,28 @@ def build_target_edge_evidence(
 ) -> str:
     """
     Build orthology edge evidence for one target merged.json file.
-    Returns path to edge_evidence.json.
+    Returns the path to edge_evidence.json.
     """
     species_list = [x.strip() for x in species_csv.split(",") if x.strip()]
+    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+    species_loci = build_all_species_loci(transcripts_by_species)
+
+    merged_target = read_json(merged_target_path)
+    target_species = merged_target["target_species"]
+
+    candidate_pairs = collect_candidate_pairs_from_merged_target(
+        merged_target=merged_target,
+        species_loci=species_loci,
+    )
+
+    candidate_pairs = remap_source_locus_ids_from_source_transcripts(
+        candidate_pairs=candidate_pairs,
+        merged_target=merged_target,
+        transcripts_by_species=transcripts_by_species,
+        species_loci=species_loci,
+    )
 
     seq_cache_dir = Path(workdir) / "sequence_cache"
-
     sequences_by_species = load_all_species_sequences(
         hal_path=hal_path,
         annotation_dir=annotation_dir,
@@ -271,21 +354,13 @@ def build_target_edge_evidence(
         cache_dir=str(seq_cache_dir),
         species_list=species_list,
     )
-    
-    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
-    species_loci = build_all_species_loci(transcripts_by_species)
 
-    merged_target = read_json(merged_target_path)
-
-    candidate_pairs = collect_candidate_pairs_from_merged_target(
-        merged_target=merged_target,
-        species_loci=species_loci,
-    )
-    candidate_pairs = remap_source_locus_ids_from_source_transcripts(
-        candidate_pairs=candidate_pairs,
-        merged_target=merged_target,
-        transcripts_by_species=transcripts_by_species,
-        species_loci=species_loci,
+    source_species_list = sorted({row[0] for row in candidate_pairs})
+    diamond_cache = build_diamond_cache_for_target(
+        workdir=workdir,
+        target_species=target_species,
+        source_species_list=source_species_list,
+        sequences_by_species=sequences_by_species,
     )
 
     anchor_map = build_empty_anchor_map()
@@ -296,12 +371,14 @@ def build_target_edge_evidence(
         candidate_pairs=candidate_pairs,
         anchor_map=anchor_map,
         sequences_by_species=sequences_by_species,
+        diamond_cache=diamond_cache,
     )
 
     edge_rows = [edge.to_row() for edge in edges]
 
     merged_target_obj = Path(merged_target_path)
     out_dir = merged_target_obj.parent
+
     json_path = out_dir / "edge_evidence.json"
     tsv_path = out_dir / "edge_evidence.tsv"
     orthogroups_path = out_dir / "orthogroups.json"
@@ -328,4 +405,5 @@ def build_target_edge_evidence(
             },
         },
     )
+
     return str(json_path)
