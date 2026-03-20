@@ -30,8 +30,14 @@ def read_fasta(path: str) -> dict[str, str]:
 
 def hal_to_fasta(hal_path: str, species: str, out_fa: str):
     out_fa = Path(out_fa)
+    tmp_fa = out_fa.with_suffix(out_fa.suffix + ".tmp")
+
     if out_fa.exists():
-        return
+        with open(out_fa) as fh:
+            first = fh.read(1)
+        if first == ">":
+            return
+        out_fa.unlink()
 
     cmd = [
         "hal2fasta",
@@ -39,8 +45,23 @@ def hal_to_fasta(hal_path: str, species: str, out_fa: str):
         species,
     ]
 
-    with open(out_fa, "w") as out:
-        subprocess.run(cmd, stdout=out, check=True)
+    try:
+        with open(tmp_fa, "w") as out:
+            subprocess.run(cmd, stdout=out, check=True)
+
+        with open(tmp_fa) as fh:
+            first = fh.read(1)
+
+        if first != ">":
+            raise RuntimeError(
+                f"hal2fasta did not produce a valid FASTA for species {species}: {tmp_fa}"
+            )
+
+        tmp_fa.replace(out_fa)
+
+    finally:
+        if tmp_fa.exists():
+            tmp_fa.unlink()
 
 
 def run_gffread(gff: str, genome_fa: str, prefix: str):
@@ -50,6 +71,11 @@ def run_gffread(gff: str, genome_fa: str, prefix: str):
 
     if Path(aa).exists() and Path(cds).exists() and Path(mrna).exists():
         return mrna, cds, aa
+
+    with open(genome_fa) as fh:
+        first = fh.read(1)
+    if first != ">":
+        raise RuntimeError(f"Genome FASTA is invalid or empty: {genome_fa}")
 
     cmd = [
         "gffread",
