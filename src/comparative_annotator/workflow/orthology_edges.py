@@ -377,6 +377,7 @@ def build_target_edge_evidence(
         merged_target=merged_target,
         transcripts_by_species=transcripts_by_species,
         species_loci=species_loci,
+        candidate_pairs = deduplicate_candidate_pairs(candidate_pairs),
     )
 
     seq_cache_dir = Path(workdir) / "sequence_cache"
