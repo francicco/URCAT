@@ -314,6 +314,39 @@ def build_diamond_cache_for_target(
 
     return diamond_cache
 
+def deduplicate_candidate_pairs(
+    candidate_pairs: list[tuple[str, str, str, str, str, Interval | None]],
+) -> list[tuple[str, str, str, str, str, Interval | None]]:
+    seen = set()
+    out = []
+
+    for row in candidate_pairs:
+        source_species, source_locus_id, target_species, target_locus_id, edge_origin, projected_interval = row
+
+        proj_key = None
+        if projected_interval is not None:
+            proj_key = (
+                projected_interval.seqid,
+                projected_interval.start,
+                projected_interval.end,
+                projected_interval.strand,
+            )
+
+        key = (
+            source_species,
+            source_locus_id,
+            target_species,
+            target_locus_id,
+            edge_origin,
+            proj_key,
+        )
+
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+
+    return out
 
 def build_target_edge_evidence(
     workdir: str,
