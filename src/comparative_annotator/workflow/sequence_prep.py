@@ -45,6 +45,35 @@ def hal_to_fasta(hal_path: str, species: str, out_fa: str):
 
 def run_gffread(gff: str, genome_fa: str, prefix: str):
     mrna = f"{prefix}.mrna.fa"
+
+
+def run_diamond(
+    query_fa: str,
+    target_fa: str,
+    out_tsv: str,
+    tmp_prefix: str,
+):
+    db_path = f"{tmp_prefix}.dmnd"
+
+    # build DB
+    subprocess.run(
+        ["diamond", "makedb", "--in", target_fa, "-d", db_path],
+        check=True,
+    )
+
+    # run search
+    subprocess.run(
+        [
+            "diamond", "blastp",
+            "-d", db_path,
+            "-q", query_fa,
+            "-o", out_tsv,
+            "--outfmt", "6", "qseqid", "sseqid", "pident", "length", "bitscore",
+            "--max-target-seqs", "5",
+            "--evalue", "1e-5",
+        ],
+        check=True,
+    )
     cds = f"{prefix}.cds.fa"
     aa = f"{prefix}.aa.fa"
 
@@ -206,3 +235,41 @@ def filter_aa_for_diamond(aa_seqs: dict[str, str], aa_qc: dict[str, dict]) -> di
             continue
         out[tx_id] = seq
     return out
+
+def load_diamond_results(path: str):
+    hits = {}
+
+    with open(path) as f:
+        for line in f:
+            q, s, pid, length, bitscore = line.strip().split()
+
+            hits[(q, s)] = {
+                "pid": float(pid) / 100.0,
+                "aln_len": int(length),
+                "bitscore": float(bitscore),
+            }
+
+    return hits
+
+def prepare_diamond_inputs(
+    cache_dir: str,
+    source_species: str,
+    target_species: str,
+    sequences_by_species: dict,
+):
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(exist_ok=True, parents=True)
+
+    src = sequences_by_species[source_species]
+    tgt = sequences_by_species[target_species]
+
+    src_clean = filter_aa_for_diamond(src["aa"], src["aa_qc"])
+    tgt_clean = filter_aa_for_diamond(tgt["aa"], tgt["aa_qc"])
+
+    src_fa = cache_dir / f"{source_species}.diamond.fa"
+    tgt_fa = cache_dir / f"{target_species}.diamond.fa"
+
+    write_fasta(src_fa, src_clean)
+    write_fasta(tgt_fa, tgt_clean)
+
+    return str(src_fa), str(tgt_fa)
