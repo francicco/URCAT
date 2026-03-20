@@ -851,6 +851,7 @@ def schedule_target_batches(
         workdir,
         annotation_dir,
         annotation_suffix,
+        hal_path,
         species_csv,
         merge_job.rv(),
         memory="4G",
