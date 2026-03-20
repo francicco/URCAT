@@ -790,6 +790,7 @@ def build_and_classify_edges(
     candidate_pairs: list[tuple[str, str, str, str, str, Interval | None]],
     anchor_map: AnchorMap | None = None,
     sequences_by_species: dict[str, dict[str, dict[str, str]]] | None = None,
+    diamond_cache: dict | None = None,
 ) -> tuple[list[CandidateEdge], dict[str, list[set[tuple[str, str]]]]]:
     fc = FeatureComputer(
         loci_by_species=loci_by_species,
@@ -797,7 +798,8 @@ def build_and_classify_edges(
         anchor_map=anchor_map,
         sequences_by_species=sequences_by_species,
     )
-
+    fc.diamond_cache = diamond_cache or {}
+    
     edges = []
     for (
         source_species,
