@@ -41,6 +41,24 @@ def load_all_transcripts(annotation_dir: str, annotation_suffix: str, species_li
         for sp in species_list
     }
 
+def canonicalize_transcript_id(tx_id: str | None) -> str | None:
+    if tx_id is None:
+        return None
+    return tx_id.removeprefix("transcript:")
+
+
+def infer_locus_id_from_transcript_id(tx_id: str | None) -> str | None:
+    """
+    Examples:
+      transcript:Hmel202001oG10.1 -> Hmel202001oG10
+      Hmel202001oG10.1            -> Hmel202001oG10
+    """
+    tx_id = canonicalize_transcript_id(tx_id)
+    if tx_id is None:
+        return None
+    if "." in tx_id:
+        return tx_id.rsplit(".", 1)[0]
+    return tx_id
 
 def build_all_species_loci(
     transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
@@ -153,18 +171,45 @@ def remap_source_locus_ids_from_source_transcripts(
 ) -> list[tuple[str, str, str, str, str, Interval | None]]:
     """
     candidate_pairs stores source transcript IDs in the 2nd field.
-    Convert them to source locus IDs using locus transcript membership.
+    Convert them to source locus IDs using, in order:
+
+    1. exact transcript membership in SpeciesLocus.transcripts
+    2. canonicalized transcript ID (without 'transcript:' prefix)
+    3. inferred locus ID from transcript ID by stripping isoform suffix
     """
     tx_to_locus: dict[tuple[str, str], str] = {}
+    locus_ids_by_species: dict[str, set[str]] = {}
 
     for species, loci in species_loci.items():
+        locus_ids_by_species[species] = {locus.locus_id for locus in loci}
+
         for locus in loci:
             for tx_id in locus.transcripts:
                 tx_to_locus[(species, tx_id)] = locus.locus_id
 
+                norm_tx = canonicalize_transcript_id(tx_id)
+                if norm_tx is not None:
+                    tx_to_locus[(species, norm_tx)] = locus.locus_id
+
     out = []
+
     for source_species, source_tx_id, target_species, target_locus_id, edge_origin, projected_interval in candidate_pairs:
+        source_locus_id = None
+
+        # 1. direct lookup
         source_locus_id = tx_to_locus.get((source_species, source_tx_id))
+
+        # 2. canonicalized transcript ID
+        if source_locus_id is None:
+            norm_tx = canonicalize_transcript_id(source_tx_id)
+            source_locus_id = tx_to_locus.get((source_species, norm_tx))
+
+        # 3. infer locus ID directly from transcript ID
+        if source_locus_id is None:
+            inferred_locus = infer_locus_id_from_transcript_id(source_tx_id)
+            if inferred_locus in locus_ids_by_species.get(source_species, set()):
+                source_locus_id = inferred_locus
+
         if source_locus_id is None:
             continue
 
