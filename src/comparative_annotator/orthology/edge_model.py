@@ -214,12 +214,12 @@ class FeatureComputer:
         transcripts_by_species: dict[str, dict[str, CandidateTranscript]] | None = None,
         anchor_map: AnchorMap | None = None,
         sequences_by_species: dict[str, dict[str, dict[str, str]]] | None = None,
-        self.diamond_cache = {},
     ) -> None:
         self.indexer = OrthologyIndexer(loci_by_species)
         self.transcripts_by_species = transcripts_by_species or {}
         self.anchor_map = anchor_map or AnchorMap()
         self.sequences_by_species = sequences_by_species or {}
+        self.diamond_cache = {}
 
     def build_edge(
         self,
