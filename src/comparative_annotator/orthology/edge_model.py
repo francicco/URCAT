@@ -214,6 +214,7 @@ class FeatureComputer:
         transcripts_by_species: dict[str, dict[str, CandidateTranscript]] | None = None,
         anchor_map: AnchorMap | None = None,
         sequences_by_species: dict[str, dict[str, dict[str, str]]] | None = None,
+        self.diamond_cache = {},
     ) -> None:
         self.indexer = OrthologyIndexer(loci_by_species)
         self.transcripts_by_species = transcripts_by_species or {}
@@ -306,7 +307,7 @@ class FeatureComputer:
             ),
         }
 
-    def compute_sequence_features(
+     def compute_sequence_features(
         self,
         source_species: str,
         source_locus: SpeciesLocus,
@@ -317,34 +318,46 @@ class FeatureComputer:
         tgt_txs = self._get_locus_transcripts(target_species, target_locus)
 
         src_aa = self.sequences_by_species.get(source_species, {}).get("aa", {})
-        tgt_aa = self.sequences_by_species.get(target_species, {}).get("aa", {})
+        hits = self.diamond_cache.get((source_species, target_species), {})
 
-        best = 0.0
+        best_score = -1.0
         best_pair = (None, None)
+        best_hit = None
 
         for s in src_txs:
-            s_seq = src_aa.get(s.transcript_id)
-            if not s_seq:
-                continue
-
             for t in tgt_txs:
-                t_seq = tgt_aa.get(t.transcript_id)
-                if not t_seq:
+                key = (s.transcript_id, t.transcript_id)
+                hit = hits.get(key)
+                if hit is None:
                     continue
 
-                score = _simple_identity(s_seq, t_seq)
-                if score > best:
-                    best = score
+                score = hit["bitscore"]
+                if score > best_score:
+                    best_score = score
                     best_pair = (s.transcript_id, t.transcript_id)
+                    best_hit = hit
 
-        has_sequences = best_pair != (None, None)
+        if best_hit is None:
+            return {
+                "prot_cov": None,
+                "prot_id": None,
+                "bitscore": None,
+                "best_hit_margin": None,
+                "cds_intact": None,
+                "cds_complete": None,
+                "best_source_tx": None,
+                "best_target_tx": None,
+            }
+
+        src_len = len(src_aa.get(best_pair[0], ""))
 
         return {
-            "prot_cov": best if has_sequences else None,
-            "prot_id": best if has_sequences else None,
+            "prot_cov": best_hit["aln_len"] / max(1, src_len),
+            "prot_id": best_hit["pid"],
+            "bitscore": best_hit["bitscore"],
             "best_hit_margin": None,
-            "cds_intact": True if has_sequences else None,
-            "cds_complete": True if has_sequences else None,
+            "cds_intact": True,
+            "cds_complete": True,
             "best_source_tx": best_pair[0],
             "best_target_tx": best_pair[1],
         }
