@@ -257,6 +257,17 @@ def build_target_edge_evidence(
     Returns path to edge_evidence.json.
     """
     species_list = [x.strip() for x in species_csv.split(",") if x.strip()]
+
+    seq_cache_dir = Path(workdir) / "sequence_cache"
+
+    sequences_by_species = load_all_species_sequences(
+        hal_path=hal_path,
+        annotation_dir=annotation_dir,
+        annotation_suffix=annotation_suffix,
+        cache_dir=str(seq_cache_dir),
+        species_list=species_list,
+    )
+    
     transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
 
@@ -279,7 +290,8 @@ def build_target_edge_evidence(
         loci_by_species=species_loci,
         transcripts_by_species=build_transcript_lookup(transcripts_by_species),
         candidate_pairs=candidate_pairs,
-        anchor_map=anchor_map,
+        anchor_map=anchor_map
+        sequences_by_species=sequences_by_species,
     )
 
     edge_rows = [edge.to_row() for edge in edges]
