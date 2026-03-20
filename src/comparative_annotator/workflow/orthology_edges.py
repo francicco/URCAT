@@ -138,7 +138,7 @@ def collect_candidate_pairs_from_merged_target(
             candidate_pairs.append(
                 (
                     source_species,
-                    primary.get(source_species, primary_target_locus),
+                    r.get("source_transcript"),
                     target_species,
                     primary_target_locus,
                     "primary",
@@ -152,7 +152,7 @@ def collect_candidate_pairs_from_merged_target(
             candidate_pairs.append(
                 (
                     source_species,
-                    primary.get(source_species, primary_target_locus or alt_locus_id),
+                    r.get("source_transcript"),
                     target_species,
                     alt_locus_id,
                     "alternative",
