@@ -27,6 +27,10 @@ from comparative_annotator.workflow.progressive import (
 
 from comparative_annotator.workflow.orthology_edges import build_target_edge_evidence
 
+from comparative_annotator.workflow.projection_table import write_projection_evidence_table
+from comparative_annotator.workflow.novel_annotation_table import write_novel_annotations_table
+from comparative_annotator.workflow.round_metrics import write_round_metrics_table
+
 @dataclass
 class FrontierSeedTranscript:
     transcript_id: str
