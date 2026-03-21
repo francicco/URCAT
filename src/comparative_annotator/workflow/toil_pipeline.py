@@ -37,6 +37,8 @@ from comparative_annotator.workflow.analysis_tables import (
     write_all_analysis_tables_for_target,
 )
 
+from comparative_annotator.workflow.final_gff3 import write_all_final_species_gff3
+
 @dataclass
 class FrontierSeedTranscript:
     transcript_id: str
