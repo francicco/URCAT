@@ -1106,6 +1106,7 @@ def main():
     output_dir = str(Path(options.outputDir).resolve())
     annotation_dir = str(Path(options.annotationDir).resolve())
     hal_path = str(Path(options.halPath).resolve())
+    species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
 
     root = Job.wrapJobFn(
         run_round_zero,
@@ -1119,13 +1120,6 @@ def main():
         memory="2G",
         disk="2G",
     )
-
-    with Toil(options) as toil:
-        toil.start(root)
-
-    from comparative_annotator.workflow.final_gff3 import write_all_final_species_gff3
-
-    species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
 
     with Toil(options) as toil:
         toil.start(root)
