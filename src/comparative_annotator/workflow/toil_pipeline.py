@@ -1160,15 +1160,15 @@ def main():
     )
 
     with Toil(options) as toil:
-        toil.start(root)
+       toil.start(root)
 
-    write_all_final_species_gff3(
-        output_dir=output_dir,
-        annotation_dir=annotation_dir,
-        annotation_suffix=options.annotationSuffix,
-        species_list=species_list,
-    )
-
+        species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
+        write_final_species_gff3s(
+            output_dir=output_dir,
+            annotation_dir=annotation_dir,
+            annotation_suffix=options.annotationSuffix,
+            species_list=species_list,
+        )
 
 if __name__ == "__main__":
     main()
