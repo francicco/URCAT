@@ -32,6 +32,11 @@ from comparative_annotator.workflow.novel_annotation_table import write_novel_an
 from comparative_annotator.workflow.round_metrics import write_round_metrics_table
 from comparative_annotator.workflow.workflow_paths import get_round_dir
 
+from comparative_annotator.workflow.analysis_tables import (
+    write_all_analysis_tables_for_round,
+    write_all_analysis_tables_for_target,
+)
+
 @dataclass
 class FrontierSeedTranscript:
     transcript_id: str
@@ -254,9 +259,7 @@ def build_round_summary(round_merged, decision):
 
 def finalize_round_outputs(output_dir: str, round_id: int) -> None:
     round_dir = get_round_dir(output_dir, round_id)
-    write_novel_annotations_table(round_dir)
-    write_round_metrics_table(round_dir)
-
+    write_all_analysis_tables_for_round(round_dir)
 
 def write_round_summary(job, workdir, round_merged_path, decision_path):
     round_merged = read_json(round_merged_path)
@@ -568,13 +571,13 @@ def merge_target_results(job, workdir, round_id, reference_species, target_speci
 
 def run_target_edge_evidence(
     job,
-    workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
-    merged_target_path,
-):
+    workdir: str,
+    annotation_dir: str,
+    annotation_suffix: str,
+    hal_path: str,
+    species_csv: str,
+    merged_target_path: str,
+) -> str:
     edge_json_path = build_target_edge_evidence(
         workdir=workdir,
         annotation_dir=annotation_dir,
@@ -583,8 +586,10 @@ def run_target_edge_evidence(
         species_csv=species_csv,
         merged_target_path=merged_target_path,
     )
-    write_projection_evidence_table(Path(edge_json_path).parent)
+    target_dir = Path(edge_json_path).parent
+    write_all_analysis_tables_for_target(target_dir)
     return edge_json_path
+
 
 def merge_round_results(job, workdir, round_id, reference_species, merged_target_paths):
     merged_targets = [read_json(p) for p in merged_target_paths]
