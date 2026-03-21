@@ -299,33 +299,26 @@ def _build_projection_candidate_rows_for_target(target_dir: str | Path) -> list[
     return rows
 
 
-def _build_best_edge_support_index(round_dir: str | Path) -> dict[tuple[str, str], dict[str, Any]]:
+def _build_best_edge_support_index(round_dir: str | Path) -> dict[str, list[dict[str, Any]]]:
     round_dir = Path(round_dir)
-    best_by_species_and_tx: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    by_source_tx: dict[str, list[dict[str, Any]]] = {}
 
     for edge_json in sorted(round_dir.rglob("edge_evidence.json")):
         payload = read_json(edge_json)
-        target_species = payload.get("target_species")
 
         for edge in payload.get("edges", []):
             source_tx = edge.get("seq_best_source_tx")
             if not source_tx:
                 continue
-            key = (target_species, source_tx)
-            best_by_species_and_tx.setdefault(key, []).append(edge)
+            by_source_tx.setdefault(source_tx, []).append(edge)
 
-    out: dict[tuple[str, str], dict[str, Any]] = {}
-    for key, edges in best_by_species_and_tx.items():
-        best = _choose_best_edge(edges)
-        if best is not None:
-            out[key] = best
-    return out
+    return by_source_tx
 
 
 def _best_support_for_row(
     row_species: str,
     source_transcripts: list[str] | None,
-    support_index: dict[tuple[str, str], dict[str, Any]],
+    support_index: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     if not source_transcripts:
         return {
@@ -341,13 +334,12 @@ def _best_support_for_row(
         }
 
     candidate_edges = []
+
     for tx in source_transcripts:
-        edge = support_index.get((row_species, tx))
-        if edge is not None:
+        for edge in support_index.get(tx, []):
             candidate_edges.append(edge)
 
-    best = _choose_best_edge(candidate_edges)
-    if best is None:
+    if not candidate_edges:
         return {
             "source_species": None,
             "best_source_transcript": None,
@@ -359,6 +351,10 @@ def _best_support_for_row(
             "supporting_edge_class": None,
             "supporting_edge_confidence": None,
         }
+
+    # Prefer support whose target species matches the row species, if present
+    same_species = [e for e in candidate_edges if e.get("target_species") == row_species]
+    best = _choose_best_edge(same_species if same_species else candidate_edges)
 
     return {
         "source_species": best.get("source_species"),
