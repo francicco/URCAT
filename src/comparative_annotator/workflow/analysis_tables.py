@@ -459,11 +459,76 @@ def write_projection_candidates_table_for_target(target_dir: str | Path) -> str:
 
 def write_round_overview_table(round_dir: str | Path) -> str:
     round_dir = Path(round_dir)
-    rows = _build_round_overview_rows(round_dir)
-    out_path = round_dir / "round_overview.tsv"
-    write_tsv(out_path, rows, columns=ROUND_OVERVIEW_COLUMNS)
-    return str(out_path)
+    summary_rows = _load_summary_rows(round_dir)
 
+    decision_path = round_dir / "post_round_decision.json"
+    decision = read_json(decision_path) if decision_path.exists() else {}
+
+    new_consensus_counts = {
+        sp: len(v) for sp, v in (decision.get("new_consensus_by_species") or {}).items()
+    }
+    orphan_counts = {
+        sp: len(v) for sp, v in (decision.get("orphan_loci_by_species") or {}).items()
+    }
+    pending_counts = {
+        sp: len(v)
+        for sp, v in (
+            decision.get("pending_seeds_by_species")
+            or decision.get("pending_frontiers_by_species")
+            or {}
+        ).items()
+    }
+
+    out_rows = []
+
+    for srow in summary_rows:
+        reference_species = srow["reference_species"]
+        target_species = srow["target_species"]
+
+        edge_path = round_dir / f"ref_{reference_species}" / f"target_{target_species}" / "edge_evidence.json"
+        class_counts = Counter()
+        n_edges_total = 0
+        n_edges_accepted = 0
+
+        if edge_path.exists():
+            edge_payload = read_json(edge_path)
+            edge_rows = edge_payload.get("edges", [])
+            n_edges_total = edge_payload.get("n_edges", len(edge_rows))
+            n_edges_accepted = sum(1 for e in edge_rows if e.get("accepted") is True)
+            class_counts = Counter(e.get("edge_class") for e in edge_rows if e.get("edge_class"))
+
+        out_rows.append({
+            "round_id": srow.get("round_id"),
+            "seed_species": srow.get("seed_species"),
+            "reference_species": reference_species,
+            "target_species": target_species,
+            "n_processed": srow.get("n_processed"),
+            "n_ok": srow.get("n_ok"),
+            "n_error": srow.get("n_error"),
+            "n_primary": srow.get("n_primary"),
+            "n_alternative_only": srow.get("n_alternative_only"),
+            "n_missing": srow.get("n_missing"),
+            "n_strand_conflict": srow.get("n_strand_conflict"),
+            "n_edges_total": n_edges_total,
+            "n_edges_accepted": n_edges_accepted,
+            "n_edge_class_A": class_counts.get("A", 0),
+            "n_edge_class_B": class_counts.get("B", 0),
+            "n_edge_class_C": class_counts.get("C", 0),
+            "n_edge_class_D": class_counts.get("D", 0),
+            "n_edge_class_E": class_counts.get("E", 0),
+            "n_edge_class_N": class_counts.get("N", 0),
+            "n_edge_class_P": class_counts.get("P", 0),
+            "n_edge_class_X": class_counts.get("X", 0),
+            "n_new_consensus": new_consensus_counts.get(target_species, 0),
+            "n_orphan_loci": orphan_counts.get(target_species, 0),
+            "n_pending_seeds": pending_counts.get(target_species, 0),
+            "next_reference_species": srow.get("next_reference_species"),
+            "stop": srow.get("stop"),
+        })
+
+    out_path = round_dir / "round_overview.tsv"
+    write_tsv(out_path, out_rows, columns=ROUND_OVERVIEW_COLUMNS)
+    return str(out_path)
 
 def write_novel_and_pending_table(round_dir: str | Path) -> str:
     round_dir = Path(round_dir)
