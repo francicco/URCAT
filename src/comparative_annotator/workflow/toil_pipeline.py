@@ -647,7 +647,10 @@ def annotate_missing_loci_and_choose_next(
     used_reference_species,
 ):
     species_list = get_species_list(species_csv)
-    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+
+    transcripts_by_species = load_all_transcripts(
+        annotation_dir, annotation_suffix, species_list
+    )
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(hal_path).resolve()))
 
@@ -657,6 +660,7 @@ def annotate_missing_loci_and_choose_next(
 
     new_consensus_by_species = {}
 
+    # ---- build projected consensus loci ----
     for target_species, payloads in missing_by_target.items():
         projected_transcripts = []
 
@@ -699,8 +703,12 @@ def annotate_missing_loci_and_choose_next(
         if consensuses:
             new_consensus_by_species[target_species] = consensuses
 
-    updated_used = append_unique_preserve_order(used_reference_species, current_reference)
+    # ---- update used references ----
+    updated_used = append_unique_preserve_order(
+        used_reference_species, current_reference
+    )
 
+    # ---- orphan loci ----
     orphan_loci_by_species = {}
     pending_frontiers_by_species = {}
 
@@ -710,6 +718,7 @@ def annotate_missing_loci_and_choose_next(
             continue
 
         native_loci = species_loci[target_species]
+
         projected_spans = collect_projected_transcript_spans_for_species(
             transcripts_by_species=transcripts_by_species,
             source_species_list=updated_used,
@@ -740,12 +749,14 @@ def annotate_missing_loci_and_choose_next(
 
         orphan_loci_by_species[target_species] = orphan_loci
 
+    # ---- pending frontiers ----
     for sp in species_list:
         if sp in updated_used:
             continue
 
         pending = []
 
+        # projected new loci
         for c in new_consensus_by_species.get(sp, []):
             pending.append(
                 {
@@ -763,6 +774,7 @@ def annotate_missing_loci_and_choose_next(
                 }
             )
 
+        # orphan native loci
         for o in orphan_loci_by_species.get(sp, []):
             pending.append(
                 {
@@ -774,7 +786,9 @@ def annotate_missing_loci_and_choose_next(
         if pending:
             pending_frontiers_by_species[sp] = pending
 
+    # ---- choose next reference ----
     seed_species = updated_used[0]
+
     tree_newick = get_hal_tree_newick(hal_path)
     reference_order = compute_reference_order(
         seed_species=seed_species,
@@ -788,6 +802,7 @@ def annotate_missing_loci_and_choose_next(
         pending_frontiers_by_species=pending_frontiers_by_species,
     )
 
+    # ---- output JSON ----
     out = {
         "round_id": round_id,
         "seed_species": seed_species,
@@ -818,6 +833,7 @@ def annotate_missing_loci_and_choose_next(
         "stop": next_reference is None,
     }
 
+    # ---- write outputs ----
     ref_out_path = (
         Path(workdir)
         / "rounds"
@@ -831,9 +847,25 @@ def annotate_missing_loci_and_choose_next(
         / f"round_{round_id:03d}"
         / "post_round_decision.json"
     )
+
     write_json(ref_out_path, out)
     write_json(round_out_path, out)
+
+    # ---- write per-round GFF3 (THIS was missing before) ----
+    round_ref_dir = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{current_reference}"
+    )
+
+    write_round_new_loci_gff3(
+        round_ref_dir=round_ref_dir,
+        decision_path=ref_out_path,
+    )
+
     finalize_round_outputs(workdir, round_id)
+
     return str(ref_out_path)
 
 
