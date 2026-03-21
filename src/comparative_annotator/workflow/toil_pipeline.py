@@ -1160,7 +1160,7 @@ def main():
     )
 
     with Toil(options) as toil:
-       toil.start(root)
+        toil.start(root)
 
         species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
         write_final_species_gff3s(
