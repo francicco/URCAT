@@ -1123,6 +1123,20 @@ def main():
     with Toil(options) as toil:
         toil.start(root)
 
+    from comparative_annotator.workflow.final_gff3 import write_all_final_species_gff3
+
+    species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
+
+    with Toil(options) as toil:
+        toil.start(root)
+
+    write_all_final_species_gff3(
+        output_dir=output_dir,
+        annotation_dir=annotation_dir,
+        annotation_suffix=options.annotationSuffix,
+        species_list=species_list,
+    )
+
 
 if __name__ == "__main__":
     main()
