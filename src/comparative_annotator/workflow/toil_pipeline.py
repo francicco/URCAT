@@ -30,6 +30,7 @@ from comparative_annotator.workflow.orthology_edges import build_target_edge_evi
 from comparative_annotator.workflow.projection_table import write_projection_evidence_table
 from comparative_annotator.workflow.novel_annotation_table import write_novel_annotations_table
 from comparative_annotator.workflow.round_metrics import write_round_metrics_table
+from comparative_annotator.workflow.workflow_paths import get_round_dir
 
 @dataclass
 class FrontierSeedTranscript:
@@ -251,6 +252,12 @@ def build_round_summary(round_merged, decision):
     }
 
 
+def finalize_round_outputs(output_dir: str, round_id: int) -> None:
+    round_dir = get_round_dir(output_dir, round_id)
+    write_novel_annotations_table(round_dir)
+    write_round_metrics_table(round_dir)
+
+
 def write_round_summary(job, workdir, round_merged_path, decision_path):
     round_merged = read_json(round_merged_path)
     decision = read_json(decision_path)
@@ -260,68 +267,69 @@ def write_round_summary(job, workdir, round_merged_path, decision_path):
     round_id = summary["round_id"]
     reference_species = summary["reference_species"]
 
-    out_dir = (
+    ref_dir = (
         Path(workdir)
         / "rounds"
         / f"round_{round_id:03d}"
         / f"ref_{reference_species}"
     )
+    round_dir = Path(workdir) / "rounds" / f"round_{round_id:03d}"
 
-    json_path = out_dir / "summary.json"
-    write_json(json_path, summary)
+    json_paths = [ref_dir / "summary.json", round_dir / "summary.json"]
+    tsv_paths = [ref_dir / "summary.tsv", round_dir / "summary.tsv"]
 
-    tsv_path = out_dir / "summary.tsv"
-    with open(tsv_path, "w") as fh:
-        fh.write(
-            "\t".join(
-                [
-                    "round_id",
-                    "seed_species",
-                    "reference_species",
-                    "target_species",
-                    "n_processed",
-                    "n_ok",
-                    "n_error",
-                    "n_primary",
-                    "n_alternative_only",
-                    "n_missing",
-                    "n_strand_conflict",
-                    "n_new_consensus",
-                    "n_orphan_loci",
-                    "n_pending_frontier",
-                    "next_reference_species",
-                    "stop",
-                ]
-            )
-            + "\n"
-        )
+    for json_path in json_paths:
+        write_json(json_path, summary)
 
-        for target_species, stats in summary["targets"].items():
-            fh.write(
-                "\t".join(
-                    [
-                        str(summary["round_id"]),
-                        str(summary["seed_species"]),
-                        str(summary["reference_species"]),
-                        str(target_species),
-                        str(stats["n_processed"]),
-                        str(stats["n_ok"]),
-                        str(stats["n_error"]),
-                        str(stats["n_primary"]),
-                        str(stats["n_alternative_only"]),
-                        str(stats["n_missing"]),
-                        str(stats["n_strand_conflict"]),
-                        str(stats["n_new_consensus"]),
-                        str(stats["n_orphan_loci"]),
-                        str(stats["n_pending_frontier"]),
-                        str(summary["next_reference_species"]),
-                        str(summary["stop"]),
-                    ]
+    header = [
+        "round_id",
+        "seed_species",
+        "reference_species",
+        "target_species",
+        "n_processed",
+        "n_ok",
+        "n_error",
+        "n_primary",
+        "n_alternative_only",
+        "n_missing",
+        "n_strand_conflict",
+        "n_new_consensus",
+        "n_orphan_loci",
+        "n_pending_frontier",
+        "next_reference_species",
+        "stop",
+    ]
+
+    for tsv_path in tsv_paths:
+        tsv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tsv_path, "w") as fh:
+            fh.write("\t".join(header) + "\n")
+            for target_species, stats in summary["targets"].items():
+                fh.write(
+                    "	".join(
+                        [
+                            str(summary["round_id"]),
+                            str(summary["seed_species"]),
+                            str(summary["reference_species"]),
+                            str(target_species),
+                            str(stats["n_processed"]),
+                            str(stats["n_ok"]),
+                            str(stats["n_error"]),
+                            str(stats["n_primary"]),
+                            str(stats["n_alternative_only"]),
+                            str(stats["n_missing"]),
+                            str(stats["n_strand_conflict"]),
+                            str(stats["n_new_consensus"]),
+                            str(stats["n_orphan_loci"]),
+                            str(stats["n_pending_frontier"]),
+                            str(summary["next_reference_species"]),
+                            str(summary["stop"]),
+                        ]
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
 
-    return str(json_path)
+    return str(json_paths[0])
 
 
 def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_species):
@@ -567,7 +575,7 @@ def run_target_edge_evidence(
     species_csv,
     merged_target_path,
 ):
-    return build_target_edge_evidence(
+    edge_json_path = build_target_edge_evidence(
         workdir=workdir,
         annotation_dir=annotation_dir,
         annotation_suffix=annotation_suffix,
@@ -575,6 +583,8 @@ def run_target_edge_evidence(
         species_csv=species_csv,
         merged_target_path=merged_target_path,
     )
+    write_projection_evidence_table(Path(edge_json_path).parent)
+    return edge_json_path
 
 def merge_round_results(job, workdir, round_id, reference_species, merged_target_paths):
     merged_targets = [read_json(p) for p in merged_target_paths]
@@ -770,6 +780,7 @@ def annotate_missing_loci_and_choose_next(
         "round_id": round_id,
         "seed_species": seed_species,
         "current_reference": current_reference,
+        "reference_species": current_reference,
         "reference_order": reference_order,
         "used_reference_species": updated_used,
         "new_consensus_by_species": {
@@ -790,19 +801,28 @@ def annotate_missing_loci_and_choose_next(
         },
         "orphan_loci_by_species": orphan_loci_by_species,
         "pending_frontiers_by_species": pending_frontiers_by_species,
+        "pending_seeds_by_species": pending_frontiers_by_species,
         "next_reference_species": next_reference,
         "stop": next_reference is None,
     }
 
-    out_path = (
+    ref_out_path = (
         Path(workdir)
         / "rounds"
         / f"round_{round_id:03d}"
         / f"ref_{current_reference}"
         / "post_round_decision.json"
     )
-    write_json(out_path, out)
-    return str(out_path)
+    round_out_path = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / "post_round_decision.json"
+    )
+    write_json(ref_out_path, out)
+    write_json(round_out_path, out)
+    finalize_round_outputs(workdir, round_id)
+    return str(ref_out_path)
 
 
 def schedule_target_batches(
