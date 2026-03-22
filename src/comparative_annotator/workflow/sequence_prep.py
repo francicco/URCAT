@@ -39,18 +39,25 @@ def ensure_fasta_index(fasta_path: str) -> None:
 def export_species_genome_from_hal(
     hal_path: str,
     species: str,
-    out_fasta: str,
+    out_fa: str,
 ) -> str:
-    out = Path(out_fasta)
+    out = Path(out_fa)
+    _safe_mkdir(out.parent)
+
     if out.exists() and out.stat().st_size > 0:
-        ensure_fasta_index(str(out))
         return str(out)
 
-    _safe_mkdir(out.parent)
-    _run(["hal2fasta", hal_path, species, str(out)])
-    ensure_fasta_index(str(out))
-    return str(out)
+    _run(
+        [
+            "hal2fasta",
+            hal_path,
+            species,
+            "--outFaPath",
+            str(out),
+        ]
+    )
 
+    return str(out)
 
 def run_gffread(
     gff_path: str,
