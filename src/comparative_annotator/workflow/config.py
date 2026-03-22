@@ -52,7 +52,6 @@ def _parse_annotation_section(
     if not cp.has_section("annotation"):
         return paths
 
-    # optionxform=str preserves case and insertion order
     for species, raw_path in cp.items("annotation"):
         species_name = species.strip()
         if not species_name:
@@ -91,13 +90,6 @@ def _parse_evidence_section(
 
 
 def load_urcat_config(config_path: str) -> URCATConfig:
-    """
-    Contract:
-      - [input] seedSpecies, halPath, optional batchSize
-      - [annotation] defines the species participating in the run
-      - HAL is used to validate species membership
-      - if [annotation] is absent/empty, species_list falls back to HAL genomes
-    """
     config_file = Path(config_path).resolve()
     _require_file(config_file, "Config file")
 
