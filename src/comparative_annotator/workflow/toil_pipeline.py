@@ -1209,13 +1209,12 @@ def main():
     with Toil(options) as toil:
         toil.start(root)
 
-        write_final_species_gff3s(
-            output_dir,
-            annotation_dir,
-            options.annotationSuffix,
-            species_list,
-        )
-
+    write_final_species_gff3s(
+        output_dir,
+        annotation_dir,
+        options.annotationSuffix,
+        options.speciesCsv,
+    )
 
 if __name__ == "__main__":
     main()
