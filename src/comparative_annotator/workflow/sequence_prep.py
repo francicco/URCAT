@@ -1,338 +1,161 @@
 from __future__ import annotations
 
-import os
+import hashlib
 import subprocess
-import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 
-def read_fasta(path: str) -> dict[str, str]:
-    seqs = {}
-    name = None
-    chunks = []
-
-    with open(path) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith(">"):
-                if name is not None:
-                    seqs[name] = "".join(chunks)
-                name = line[1:].split()[0]
-                chunks = []
-            else:
-                chunks.append(line)
-
-    if name is not None:
-        seqs[name] = "".join(chunks)
-
-    return seqs
+@dataclass
+class SpeciesSequencePaths:
+    species: str
+    genome_fa: str
+    mrna_fa: str | None
+    cds_fa: str | None
+    aa_fa: str | None
+    has_annotation: bool
 
 
-def hal_to_fasta(hal_path: str, species: str, out_fa: str):
-    out_fa = Path(out_fa)
-
-    if out_fa.exists() and out_fa.stat().st_size > 0:
-        with open(out_fa) as fh:
-            first = fh.read(1)
-        if first == ">":
-            return
-
-    tmp_fa = out_fa.with_name(f"{out_fa.name}.{uuid.uuid4().hex}.tmp")
-
-    try:
-        with open(tmp_fa, "w") as out:
-            subprocess.run(
-                ["hal2fasta", hal_path, species],
-                stdout=out,
-                check=True,
-            )
-
-        seqs = read_fasta(str(tmp_fa))
-        if not seqs:
-            raise RuntimeError(f"hal2fasta produced no sequences for {species}")
-
-        write_fasta(str(tmp_fa), seqs)
-
-        with open(tmp_fa) as fh:
-            first = fh.read(1)
-        if first != ">":
-            raise RuntimeError(f"Canonical FASTA rewrite failed for {species}: {tmp_fa}")
-
-        os.replace(tmp_fa, out_fa)
-
-    finally:
-        if tmp_fa.exists():
-            tmp_fa.unlink()
+def _safe_mkdir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
 
 
-def run_gffread(gff: str, genome_fa: str, prefix: str):
-    mrna = Path(f"{prefix}.mrna.fa")
-    cds = Path(f"{prefix}.cds.fa")
-    aa = Path(f"{prefix}.aa.fa")
+def _hash_file_identity(path: Path) -> str:
+    return hashlib.md5(str(path.resolve()).encode("utf-8")).hexdigest()
+
+
+def _run(cmd: list[str]) -> None:
+    subprocess.run(cmd, check=True)
+
+
+def ensure_fasta_index(fasta_path: str) -> None:
+    fasta = Path(fasta_path)
+    fai = fasta.with_suffix(fasta.suffix + ".fai")
+    if fai.exists():
+        return
+    _run(["samtools", "faidx", str(fasta)])
+
+
+def export_species_genome_from_hal(
+    hal_path: str,
+    species: str,
+    out_fasta: str,
+) -> str:
+    out = Path(out_fasta)
+    if out.exists() and out.stat().st_size > 0:
+        ensure_fasta_index(str(out))
+        return str(out)
+
+    _safe_mkdir(out.parent)
+    _run(["hal2fasta", hal_path, species, str(out)])
+    ensure_fasta_index(str(out))
+    return str(out)
+
+
+def run_gffread(
+    gff_path: str,
+    genome_fa: str,
+    prefix: str,
+) -> tuple[str, str, str]:
+    prefix_path = Path(prefix)
+    _safe_mkdir(prefix_path.parent)
+
+    token = _hash_file_identity(Path(gff_path))
+    mrna_tmp = prefix_path.parent / f"{prefix_path.name}.mrna.fa.{token}.tmp"
+    cds_tmp = prefix_path.parent / f"{prefix_path.name}.cds.fa.{token}.tmp"
+    aa_tmp = prefix_path.parent / f"{prefix_path.name}.aa.fa.{token}.tmp"
+
+    mrna = prefix_path.parent / f"{prefix_path.name}.mrna.fa"
+    cds = prefix_path.parent / f"{prefix_path.name}.cds.fa"
+    aa = prefix_path.parent / f"{prefix_path.name}.aa.fa"
 
     if mrna.exists() and cds.exists() and aa.exists():
-        if mrna.stat().st_size > 0 and cds.stat().st_size > 0 and aa.stat().st_size > 0:
-            return str(mrna), str(cds), str(aa)
-
-    tmp_tag = uuid.uuid4().hex
-    mrna_tmp = mrna.with_name(f"{mrna.name}.{tmp_tag}.tmp")
-    cds_tmp = cds.with_name(f"{cds.name}.{tmp_tag}.tmp")
-    aa_tmp = aa.with_name(f"{aa.name}.{tmp_tag}.tmp")
-
-    with open(genome_fa) as fh:
-        first = fh.read(1)
-    if first != ">":
-        raise RuntimeError(f"Genome FASTA is invalid or empty: {genome_fa}")
+        return str(mrna), str(cds), str(aa)
 
     cmd = [
         "gffread",
-        gff,
-        "-g", genome_fa,
-        "-w", str(mrna_tmp),
-        "-x", str(cds_tmp),
-        "-y", str(aa_tmp),
+        gff_path,
+        "-g",
+        genome_fa,
+        "-w",
+        str(mrna_tmp),
+        "-x",
+        str(cds_tmp),
+        "-y",
+        str(aa_tmp),
     ]
-    try:
-        subprocess.run(cmd, check=True)
+    _run(cmd)
 
-        if not (mrna_tmp.exists() and cds_tmp.exists() and aa_tmp.exists()):
-            raise RuntimeError("gffread did not produce all expected output files")
-
-        os.replace(mrna_tmp, mrna)
-        os.replace(cds_tmp, cds)
-        os.replace(aa_tmp, aa)
-
-    finally:
-        for p in (mrna_tmp, cds_tmp, aa_tmp):
-            if p.exists():
-                p.unlink()
+    mrna_tmp.replace(mrna)
+    cds_tmp.replace(cds)
+    aa_tmp.replace(aa)
 
     return str(mrna), str(cds), str(aa)
 
 
-def run_diamond(
-    query_fa: str,
-    target_fa: str,
-    out_tsv: str,
-    tmp_prefix: str,
-):
-    out_tsv = Path(out_tsv)
-    if out_tsv.exists() and out_tsv.stat().st_size > 0:
-        return
-
-    tag = uuid.uuid4().hex
-    db_prefix = f"{tmp_prefix}.{tag}"
-    out_tmp = out_tsv.with_name(f"{out_tsv.name}.{tag}.tmp")
-
-    subprocess.run(
-        ["diamond", "makedb", "--in", target_fa, "-d", db_prefix],
-        check=True,
-    )
-
-    try:
-        subprocess.run(
-            [
-                "diamond", "blastp",
-                "-d", db_prefix,
-                "-q", query_fa,
-                "-o", str(out_tmp),
-                "--outfmt", "6", "qseqid", "sseqid", "pident", "length", "bitscore",
-                "--max-target-seqs", "5",
-                "--evalue", "1e-5",
-            ],
-            check=True,
-        )
-
-        os.replace(out_tmp, out_tsv)
-
-    finally:
-        if out_tmp.exists():
-            out_tmp.unlink()
-        for suffix in (".dmnd",):
-            p = Path(f"{db_prefix}{suffix}")
-            if p.exists():
-                p.unlink()
-
-
 def prepare_species_sequences(
-    hal_path: str,
+    workdir: str,
     annotation_dir: str,
     annotation_suffix: str,
-    cache_dir: str,
-    species: str,
-):
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    species_list: list[str],
+    hal_path: str,
+) -> dict[str, dict[str, str | bool | None]]:
+    workdir_p = Path(workdir)
+    annotation_dir_p = Path(annotation_dir)
+    cache_dir = workdir_p / "sequence_cache"
+    _safe_mkdir(cache_dir)
 
-    genome_fa = cache_dir / f"{species}.fa"
-    hal_to_fasta(hal_path, species, str(genome_fa))
+    out: dict[str, dict[str, str | bool | None]] = {}
 
-    gff = Path(annotation_dir) / f"{species}{annotation_suffix}"
+    for species in species_list:
+        genome_fa = cache_dir / f"{species}.fa"
+        export_species_genome_from_hal(
+            hal_path=hal_path,
+            species=species,
+            out_fasta=str(genome_fa),
+        )
 
-    prefix = str(cache_dir / species)
-    mrna, cds, aa = run_gffread(str(gff), str(genome_fa), prefix)
+        gff = annotation_dir_p / f"{species}{annotation_suffix}"
 
-    return {
-        "mrna": mrna,
-        "cds": cds,
-        "aa": aa,
-    }
+        if not gff.exists():
+            out[species] = {
+                "genome_fa": str(genome_fa),
+                "mrna_fa": None,
+                "cds_fa": None,
+                "aa_fa": None,
+                "has_annotation": False,
+            }
+            continue
 
+        prefix = cache_dir / species
+        mrna_fa, cds_fa, aa_fa = run_gffread(
+            gff_path=str(gff),
+            genome_fa=str(genome_fa),
+            prefix=str(prefix),
+        )
 
-def sanitize_protein_sequence(seq: str) -> tuple[str, dict]:
-    seq = seq.strip().upper()
+        out[species] = {
+            "genome_fa": str(genome_fa),
+            "mrna_fa": mrna_fa,
+            "cds_fa": cds_fa,
+            "aa_fa": aa_fa,
+            "has_annotation": True,
+        }
 
-    flags = {
-        "had_terminal_stop": False,
-        "had_internal_stop": False,
-        "had_invalid_chars": False,
-        "is_empty_after_cleaning": False,
-    }
-
-    if seq.endswith(".") or seq.endswith("*"):
-        flags["had_terminal_stop"] = True
-        seq = seq[:-1]
-
-    if "." in seq or "*" in seq:
-        flags["had_internal_stop"] = True
-        seq = seq.replace(".", "").replace("*", "")
-
-    allowed = set("ACDEFGHIKLMNPQRSTVWYX")
-    cleaned = []
-    for aa in seq:
-        if aa in allowed:
-            cleaned.append(aa)
-        else:
-            flags["had_invalid_chars"] = True
-            cleaned.append("X")
-
-    seq = "".join(cleaned)
-
-    if not seq:
-        flags["is_empty_after_cleaning"] = True
-
-    return seq, flags
-
-
-def read_protein_fasta_with_qc(path: str) -> tuple[dict[str, str], dict[str, dict]]:
-    seqs = {}
-    qc = {}
-
-    name = None
-    chunks = []
-
-    with open(path) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith(">"):
-                if name is not None:
-                    raw = "".join(chunks)
-                    clean, flags = sanitize_protein_sequence(raw)
-                    seqs[name] = clean
-                    qc[name] = flags
-                name = line[1:].split()[0]
-                chunks = []
-            else:
-                chunks.append(line)
-
-    if name is not None:
-        raw = "".join(chunks)
-        clean, flags = sanitize_protein_sequence(raw)
-        seqs[name] = clean
-        qc[name] = flags
-
-    return seqs, qc
+    return out
 
 
 def load_all_species_sequences(
-    hal_path: str,
+    workdir: str,
     annotation_dir: str,
     annotation_suffix: str,
-    cache_dir: str,
     species_list: list[str],
-):
-    seqs = {}
-
-    for sp in species_list:
-        paths = prepare_species_sequences(
-            hal_path=hal_path,
-            annotation_dir=annotation_dir,
-            annotation_suffix=annotation_suffix,
-            cache_dir=cache_dir,
-            species=sp,
-        )
-
-        aa_seqs, aa_qc = read_protein_fasta_with_qc(paths["aa"])
-
-        seqs[sp] = {
-            "mrna": read_fasta(paths["mrna"]),
-            "cds": read_fasta(paths["cds"]),
-            "aa": aa_seqs,
-            "aa_qc": aa_qc,
-        }
-
-    return seqs
-
-
-def write_fasta(path: str, seqs: dict[str, str]):
-    with open(path, "w") as fh:
-        for name, seq in seqs.items():
-            if not seq:
-                continue
-            fh.write(f">{name}\n")
-            for i in range(0, len(seq), 60):
-                fh.write(seq[i:i+60] + "\n")
-
-
-def filter_aa_for_diamond(aa_seqs: dict[str, str], aa_qc: dict[str, dict]) -> dict[str, str]:
-    out = {}
-    for tx_id, seq in aa_seqs.items():
-        flags = aa_qc.get(tx_id, {})
-        if flags.get("is_empty_after_cleaning"):
-            continue
-        if flags.get("had_internal_stop"):
-            continue
-        out[tx_id] = seq
-    return out
-
-def load_diamond_results(path: str):
-    hits = {}
-
-    with open(path) as f:
-        for line in f:
-            q, s, pid, length, bitscore = line.strip().split()
-
-            hits[(q, s)] = {
-                "pid": float(pid) / 100.0,
-                "aln_len": int(length),
-                "bitscore": float(bitscore),
-            }
-
-    return hits
-
-def prepare_diamond_inputs(
-    cache_dir: str,
-    source_species: str,
-    target_species: str,
-    sequences_by_species: dict,
-):
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(exist_ok=True, parents=True)
-
-    src = sequences_by_species[source_species]
-    tgt = sequences_by_species[target_species]
-
-    src_clean = filter_aa_for_diamond(src["aa"], src["aa_qc"])
-    tgt_clean = filter_aa_for_diamond(tgt["aa"], tgt["aa_qc"])
-
-    src_fa = cache_dir / f"{source_species}.diamond.fa"
-    tgt_fa = cache_dir / f"{target_species}.diamond.fa"
-
-    write_fasta(src_fa, src_clean)
-    write_fasta(tgt_fa, tgt_clean)
-
-    return str(src_fa), str(tgt_fa)
+    hal_path: str,
+) -> dict[str, dict[str, str | bool | None]]:
+    return prepare_species_sequences(
+        workdir=workdir,
+        annotation_dir=annotation_dir,
+        annotation_suffix=annotation_suffix,
+        species_list=species_list,
+        hal_path=hal_path,
+    )
