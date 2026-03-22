@@ -102,11 +102,13 @@ def load_all_transcripts(
     }
 
 
-def build_all_species_loci(transcripts_by_species):
-    species_loci = {}
-    for sp, txdict in transcripts_by_species.items():
-        species_loci[sp] = build_species_loci(list(txdict.values()), species=sp)
-    return species_loci
+def build_all_species_loci(
+    transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
+):
+    return {
+        sp: build_species_loci(list(txdict.values()), species=sp)
+        for sp, txdict in transcripts_by_species.items()
+    }
 
 
 def get_hal_tree_newick(hal_path: str) -> str:
