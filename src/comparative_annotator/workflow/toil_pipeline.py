@@ -856,11 +856,18 @@ def main():
     parser.add_argument("--urcatConfig", required=True, help="Path to URCAT INI config")
     parser.add_argument("--outputDir", required=True, help="Workflow output directory")
 
+    cfg = load_urcat_config(args.config)
     args = parser.parse_args()
-
-    cfg = load_urcat_config(args.urcatConfig)
     output_dir = str(Path(args.outputDir).resolve())
-
+    
+    resolved_cfg = URCATConfig(
+        seed_species=cfg.seed_species,
+        hal_path=cfg.hal_path,
+        batch_size=cfg.batch_size,
+        species_list=cfg.species_list,
+        annotation_paths=cfg.annotation_paths,
+    )
+    
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
