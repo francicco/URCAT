@@ -48,10 +48,11 @@ from pathlib import Path
 
 
 def apply_config_overrides(args):
-    if not args.config:
+    config_path = getattr(args, "config", None)
+    if not config_path:
         return args
 
-    cfg_path = Path(args.config)
+    cfg_path = Path(config_path)
     if not cfg_path.exists():
         raise FileNotFoundError(f"Config file not found: {cfg_path}")
 
@@ -60,7 +61,6 @@ def apply_config_overrides(args):
 
     cfg = {}
 
-    # Accept values from DEFAULT plus any common section names
     for section_name in ["DEFAULT", "input", "inputs", "urcat", "main"]:
         if section_name == "DEFAULT":
             items = cp.defaults().items()
@@ -80,17 +80,17 @@ def apply_config_overrides(args):
                 return cast(value) if cast else value
         return None
 
-    if getattr(args, "seedSpecies", None) is None:
+    if getattr(args, "seedSpecies", None) in (None, ""):
         args.seedSpecies = cfg_get("seedSpecies", "seedspecies")
-    if getattr(args, "speciesCsv", None) is None:
+    if getattr(args, "speciesCsv", None) in (None, ""):
         args.speciesCsv = cfg_get("speciesCsv", "speciescsv")
-    if getattr(args, "halPath", None) is None:
+    if getattr(args, "halPath", None) in (None, ""):
         args.halPath = cfg_get("halPath", "halpath")
-    if getattr(args, "annotationDir", None) is None:
+    if getattr(args, "annotationDir", None) in (None, ""):
         args.annotationDir = cfg_get("annotationDir", "annotationdir")
-    if getattr(args, "annotationSuffix", None) is None:
+    if getattr(args, "annotationSuffix", None) in (None, ""):
         args.annotationSuffix = cfg_get("annotationSuffix", "annotationsuffix")
-    if getattr(args, "batchSize", None) is None:
+    if getattr(args, "batchSize", None) in (None, ""):
         args.batchSize = cfg_get("batchSize", "batchsize", cast=int)
 
     return args
