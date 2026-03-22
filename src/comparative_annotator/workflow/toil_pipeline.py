@@ -1230,6 +1230,20 @@ def main():
     from argparse import ArgumentParser
     from configparser import ConfigParser
 
+    args = parser.parse_args()
+    args = apply_config_overrides(args)
+
+    missing = []
+    for name in ["seedSpecies", "speciesCsv", "halPath", "annotationDir"]:
+        if getattr(args, name, None) in (None, ""):
+            missing.append(f"--{name}")
+
+    if missing:
+        parser.error(
+            "the following arguments are required (via CLI or --config): "
+            + ", ".join(missing)
+        )
+    
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
