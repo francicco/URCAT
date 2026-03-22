@@ -733,7 +733,25 @@ def annotate_missing_loci_and_choose_next(
             if consensuses:
                 new_consensus_by_species[target_species] = consensuses
 
-        fragmented_by_species[target_species] = summarize_projected_blocks(projected_blocks_for_summary)
+        grouped_fragmented = {}
+        for row in projected_blocks_for_summary:
+            key = (
+                row["source_species"],
+                tuple(sorted([row["source_transcript"]])),
+            )
+            grouped_fragmented.setdefault(key, []).append(row)
+
+        fragmented_entries = []
+        for (source_species_key, source_transcripts_key), blocks in grouped_fragmented.items():
+            fragmented_entries.append(
+                summarize_projected_blocks(
+                    source_species=source_species_key,
+                    source_transcripts=list(source_transcripts_key),
+                    blocks=blocks,
+                )
+            )
+
+        fragmented_by_species[target_species] = fragmented_entries
 
     updated_used = append_unique_preserve_order(used_reference_species, current_reference)
 
