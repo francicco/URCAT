@@ -1279,8 +1279,7 @@ def main():
     Job.Runner.addToilOptions(parser)
 
     parser.add_argument("--outputDir", required=True)
-    parser.add_argument("--config", default=None, metavar="PATH",
-                        help="INI config file (required)")
+    # Note: --config is already registered by Toil's configargparse integration
     parser.add_argument("--seedSpecies", default=None)
     parser.add_argument("--speciesCsv", default=None)
     parser.add_argument("--halPath", default=None)
