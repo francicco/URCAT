@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 import hashlib
 import subprocess
 from dataclasses import dataclass
@@ -60,39 +61,35 @@ def export_species_genome_from_hal(
     return str(out)
 
 
-def run_gffread(
-    gff_path: str,
-    genome_fa: str,
-    prefix: str,
-) -> tuple[str, str, str]:
+def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, str]:
     prefix_path = Path(prefix)
-    _safe_mkdir(prefix_path.parent)
+    prefix_path.parent.mkdir(parents=True, exist_ok=True)
 
-    token = _hash_file_identity(Path(gff_path))
-    mrna_tmp = prefix_path.parent / f"{prefix_path.name}.mrna.fa.{token}.tmp"
-    cds_tmp = prefix_path.parent / f"{prefix_path.name}.cds.fa.{token}.tmp"
-    aa_tmp = prefix_path.parent / f"{prefix_path.name}.aa.fa.{token}.tmp"
+    mrna = Path(f"{prefix}.mrna.fa")
+    cds = Path(f"{prefix}.cds.fa")
+    aa = Path(f"{prefix}.aa.fa")
 
-    mrna = prefix_path.parent / f"{prefix_path.name}.mrna.fa"
-    cds = prefix_path.parent / f"{prefix_path.name}.cds.fa"
-    aa = prefix_path.parent / f"{prefix_path.name}.aa.fa"
-
-    if mrna.exists() and cds.exists() and aa.exists():
-        return str(mrna), str(cds), str(aa)
+    tmp_tag = uuid.uuid4().hex
+    mrna_tmp = Path(f"{prefix}.mrna.fa.{tmp_tag}.tmp")
+    cds_tmp = Path(f"{prefix}.cds.fa.{tmp_tag}.tmp")
+    aa_tmp = Path(f"{prefix}.aa.fa.{tmp_tag}.tmp")
 
     cmd = [
         "gffread",
         gff_path,
-        "-g",
-        genome_fa,
-        "-w",
-        str(mrna_tmp),
-        "-x",
-        str(cds_tmp),
-        "-y",
-        str(aa_tmp),
+        "-g", genome_fa,
+        "-w", str(mrna_tmp),
+        "-x", str(cds_tmp),
+        "-y", str(aa_tmp),
     ]
-    _run(cmd)
+    subprocess.run(cmd, check=True)
+
+    missing = [str(p) for p in (mrna_tmp, cds_tmp, aa_tmp) if not p.exists()]
+    if missing:
+        raise RuntimeError(
+            "gffread finished but did not create expected output files: "
+            + ", ".join(missing)
+        )
 
     mrna_tmp.replace(mrna)
     cds_tmp.replace(cds)
