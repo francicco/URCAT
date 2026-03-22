@@ -185,3 +185,103 @@ def prepare_diamond_inputs(
         for species, paths in seqs.items()
         if paths.get("aa_fa") is not None
     }
+
+
+def run_diamond(
+    query_fa: str,
+    target_fa: str,
+    out_tsv: str,
+    tmp_prefix: str,
+    sensitivity: str = "--ultra-sensitive",
+    max_target_seqs: int = 25,
+    evalue: float = 1e-5,
+    threads: int = 1,
+) -> str:
+    """
+    Run DIAMOND blastp of query proteins against target proteins.
+    Returns the output TSV path.
+    """
+    out_tsv_p = Path(out_tsv)
+    db_prefix = Path(f"{tmp_prefix}.dmnd")
+
+    _safe_mkdir(out_tsv_p.parent)
+    _safe_mkdir(db_prefix.parent)
+
+    if not db_prefix.exists():
+        _run(
+            [
+                "diamond",
+                "makedb",
+                "--in",
+                str(target_fa),
+                "--db",
+                str(db_prefix),
+            ]
+        )
+
+    cmd = [
+        "diamond",
+        "blastp",
+        "--query",
+        str(query_fa),
+        "--db",
+        str(db_prefix),
+        "--out",
+        str(out_tsv_p),
+        "--outfmt",
+        "6",
+        "qseqid",
+        "sseqid",
+        "pident",
+        "length",
+        "bitscore",
+        "evalue",
+        "--threads",
+        str(threads),
+        "--max-target-seqs",
+        str(max_target_seqs),
+        "--evalue",
+        str(evalue),
+    ]
+
+    if sensitivity:
+        cmd.insert(2, sensitivity)
+
+    _run(cmd)
+    return str(out_tsv_p)
+
+
+def load_diamond_results(path: str) -> dict[tuple[str, str], dict]:
+    """
+    Read DIAMOND outfmt 6 table into:
+      {(qseqid, sseqid): {"pid": ..., "aln_len": ..., "bitscore": ..., "evalue": ...}}
+    keeping the first/best row encountered per pair.
+    """
+    results: dict[tuple[str, str], dict] = {}
+    p = Path(path)
+
+    if not p.exists() or p.stat().st_size == 0:
+        return results
+
+    with open(p) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+
+            fields = line.split("\t")
+            if len(fields) < 6:
+                continue
+
+            qseqid, sseqid, pident, length, bitscore, evalue = fields[:6]
+            key = (qseqid, sseqid)
+
+            if key not in results:
+                results[key] = {
+                    "pid": float(pident),
+                    "aln_len": int(length),
+                    "bitscore": float(bitscore),
+                    "evalue": float(evalue),
+                }
+
+    return results
