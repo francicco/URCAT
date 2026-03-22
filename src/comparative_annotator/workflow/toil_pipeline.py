@@ -713,11 +713,11 @@ def annotate_missing_loci_and_choose_next(
                             "source_seqid": seed.seqid,
                             "source_strand": seed.strand,
                             "source_exon_number": exon_idx,
-                            "target_seqid": iv["seqid"],
-                            "target_start": iv["start"],
-                            "target_end": iv["end"],
-                            "target_strand": iv["strand"],
-                            "chain_score": iv.get("chain_score"),
+                            "target_seqid": iv.seqid,
+                            "target_start": iv.start,
+                            "target_end": iv.end,
+                            "target_strand": iv.strand,
+                            "chain_score": getattr(iv, "chain_score", None),
                         }
                     )
 
