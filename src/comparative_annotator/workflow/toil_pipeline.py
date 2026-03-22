@@ -1226,8 +1226,10 @@ def run_round_zero(
 
 
 def main():
+    import sys
     from argparse import ArgumentParser
     from configparser import ConfigParser
+    from pathlib import Path
 
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
@@ -1242,13 +1244,30 @@ def main():
 
     options = parser.parse_args()
 
+    # ---- DEBUG: basic args ----
+    print("DEBUG options.config =", repr(getattr(options, "config", None)), file=sys.stderr)
+    print("DEBUG cwd =", Path.cwd(), file=sys.stderr)
+
+    # ---- CONFIG LOADING ----
     config = ConfigParser()
     config_path = getattr(options, "config", None)
-    if config_path:
-        read_files = config.read(config_path)
-        if not read_files:
-            parser.error(f"Could not read config file: {config_path}")
 
+    print("DEBUG config_path =", repr(config_path), file=sys.stderr)
+
+    if config_path:
+        config_path = str(Path(config_path).resolve())
+        read_files = config.read(config_path)
+
+        print("DEBUG read_files =", read_files, file=sys.stderr)
+        print("DEBUG sections =", config.sections(), file=sys.stderr)
+        print("DEBUG defaults =", dict(config.defaults()), file=sys.stderr)
+
+        if config.has_section("input"):
+            print("DEBUG input items =", dict(config.items("input")), file=sys.stderr)
+    else:
+        print("DEBUG no config path found", file=sys.stderr)
+
+    # ---- CONFIG ACCESS ----
     def cfg_get(*keys, default=None):
         for section in ("input", "DEFAULT"):
             if section == "DEFAULT":
@@ -1258,6 +1277,7 @@ def main():
             else:
                 source = {}
 
+            # normalize keys
             source = {str(k).strip().lower(): str(v).strip() for k, v in source.items()}
 
             for key in keys:
@@ -1267,6 +1287,7 @@ def main():
 
         return default
 
+    # ---- RESOLVE PARAMETERS ----
     seed_species = options.seedSpecies or cfg_get("seedSpecies", "seed_species")
     species_csv = options.speciesCsv or cfg_get("speciesCsv", "species", "species_list")
     hal_path_value = options.halPath or cfg_get("halPath", "hal", "hal_path")
@@ -1274,10 +1295,27 @@ def main():
     annotation_suffix = options.annotationSuffix or cfg_get(
         "annotationSuffix", "annotation_suffix", default=".test.gff3"
     )
-    batch_size = options.batchSize if options.batchSize is not None else int(
-        cfg_get("batchSize", "batch_size", default="200")
+    batch_size = (
+        options.batchSize
+        if options.batchSize is not None
+        else int(cfg_get("batchSize", "batch_size", default="200"))
     )
 
+    # ---- DEBUG: resolved values ----
+    print(
+        "DEBUG resolved:",
+        {
+            "seed_species": seed_species,
+            "species_csv": species_csv,
+            "hal_path_value": hal_path_value,
+            "annotation_dir_value": annotation_dir_value,
+            "annotation_suffix": annotation_suffix,
+            "batch_size": batch_size,
+        },
+        file=sys.stderr,
+    )
+
+    # ---- VALIDATION ----
     missing = []
     if not seed_species:
         missing.append("--seedSpecies")
@@ -1294,10 +1332,12 @@ def main():
             + ", ".join(missing)
         )
 
+    # ---- NORMALIZE PATHS ----
     output_dir = str(Path(options.outputDir).resolve())
     hal_path = str(Path(hal_path_value).resolve())
     annotation_dir = str(Path(annotation_dir_value).resolve())
 
+    # ---- RUN PIPELINE ----
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
