@@ -52,17 +52,27 @@ def write_edge_rows_tsv(path: str, edge_rows: list[dict]):
             )
 
 
-def load_transcripts_for_species(annotation_dir: str, annotation_suffix: str, species: str):
+def load_transcripts_for_species(
+    annotation_dir: str,
+    annotation_suffix: str,
+    species: str,
+):
     gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix}").resolve()
+
+    if not gff_path.exists():
+        return {}
+
     return load_gff3(str(gff_path), species=species)
 
-
-def load_all_transcripts(annotation_dir: str, annotation_suffix: str, species_list: list[str]):
+def load_all_transcripts(
+    annotation_dir: str,
+    annotation_suffix: str,
+    species_list: list[str],
+):
     return {
         sp: load_transcripts_for_species(annotation_dir, annotation_suffix, sp)
         for sp in species_list
     }
-
 
 def build_all_species_loci(
     transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
