@@ -662,6 +662,230 @@ def annotate_missing_loci_and_choose_next(
     from comparative_annotator.workflow.fragmented_loci_table import write_fragmented_loci_table
     from comparative_annotator.workflow.fragmented_projection import summarize_projected_blocks
 
+    species_list = get_species_list(species_csv)
+    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+    species_loci = build_all_species_loci(transcripts_by_species)
+    hal = HALAdapter(str(Path(hal_path).resolve()))
+
+    round_merged = read_json(round_merged_path)
+    missing_by_target = extract_missing_locus_payloads(round_merged)
+    explained_locus_ids_by_species = collect_explained_locus_ids_from_round(round_merged)
+
+    new_consensus_by_species = {}
+    fragmented_by_species = {}
+
+    for target_species, payloads in missing_by_target.items():
+        projected_transcripts = []
+        projected_blocks_for_summary = []
+
+        for payload in payloads:
+            source_species = payload["source_species"]
+            source_tx_id = payload["source_transcript"]
+
+            if source_tx_id not in transcripts_by_species.get(source_species, {}):
+                continue
+
+            seed = transcripts_by_species[source_species][source_tx_id]
+            projected_exon_blocks = []
+
+            for exon_start, exon_end in seed.exons:
+                intervals = hal.project_interval(
+                    source_species=seed.species,
+                    target_species=target_species,
+                    seqid=seed.seqid,
+                    start=exon_start,
+                    end=exon_end,
+                    strand=seed.strand,
+                    source_transcript=seed.transcript_id,
+                )
+                projected_exon_blocks.append(intervals)
+
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            projected_transcripts.extend(pts)
+
+            for exon_idx, intervals in enumerate(projected_exon_blocks, start=1):
+                for iv in intervals:
+                    projected_blocks_for_summary.append(
+                        {
+                            "source_species": seed.species,
+                            "source_transcript": seed.transcript_id,
+                            "target_species": target_species,
+                            "source_seqid": seed.seqid,
+                            "source_strand": seed.strand,
+                            "source_exon_number": exon_idx,
+                            "target_seqid": iv["seqid"],
+                            "target_start": iv["start"],
+                            "target_end": iv["end"],
+                            "target_strand": iv["strand"],
+                            "chain_score": iv.get("chain_score"),
+                        }
+                    )
+
+        if projected_transcripts:
+            clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
+            consensuses = []
+
+            for cluster in clusters:
+                best_strand, _ = choose_missing_locus_strand(cluster)
+                consensus = build_consensus_missing_transcript(cluster, best_strand)
+                consensuses.append(consensus)
+
+            if consensuses:
+                new_consensus_by_species[target_species] = consensuses
+
+        fragmented_summary = summarize_projected_blocks(projected_blocks_for_summary)
+        fragmented_by_species[target_species] = fragmented_summary
+
+    updated_used = append_unique_preserve_order(used_reference_species, current_reference)
+
+    orphan_loci_by_species = {}
+    pending_frontiers_by_species = {}
+
+    for target_species in species_list:
+        if target_species in updated_used:
+            orphan_loci_by_species[target_species] = []
+            continue
+
+        native_loci = species_loci.get(target_species, [])
+        projected_spans = collect_projected_transcript_spans_for_species(
+            transcripts_by_species=transcripts_by_species,
+            source_species_list=updated_used,
+            target_species=target_species,
+            hal=hal,
+        )
+
+        explained_ids = explained_locus_ids_by_species.get(target_species, set())
+        orphan_loci = []
+
+        for locus in native_loci:
+            if locus.locus_id in explained_ids:
+                continue
+            if locus_overlaps_any_interval(locus, projected_spans):
+                continue
+
+            orphan_loci.append(
+                {
+                    "locus_id": locus.locus_id,
+                    "species": locus.species,
+                    "seqid": locus.seqid,
+                    "start": locus.start,
+                    "end": locus.end,
+                    "strand": locus.strand,
+                    "transcripts": locus.transcripts,
+                }
+            )
+
+        orphan_loci_by_species[target_species] = orphan_loci
+
+    for sp in species_list:
+        if sp in updated_used:
+            continue
+
+        pending = []
+
+        for c in new_consensus_by_species.get(sp, []):
+            pending.append(
+                {
+                    "kind": "urcat_consensus",
+                    "species": c.species,
+                    "seqid": c.seqid,
+                    "start": min(e[0] for e in c.exons),
+                    "end": max(e[1] for e in c.exons),
+                    "strand": c.strand,
+                    "support_count": c.support_count,
+                    "total_chain_score": c.total_chain_score,
+                    "mean_exon_recovery": c.mean_exon_recovery,
+                    "source_transcripts": c.source_transcripts,
+                    "exons": c.exons,
+                }
+            )
+
+        for o in orphan_loci_by_species.get(sp, []):
+            pending.append(
+                {
+                    "kind": "orphan_native_locus",
+                    **o,
+                }
+            )
+
+        if pending:
+            pending_frontiers_by_species[sp] = pending
+
+    seed_species = updated_used[0]
+    tree_newick = get_hal_tree_newick(hal_path)
+    reference_order = compute_reference_order(
+        seed_species=seed_species,
+        species_tree_newick=tree_newick,
+        species_list=species_list,
+    )
+
+    next_reference = pick_next_reference_from_order(
+        reference_order=reference_order,
+        used_reference_species=updated_used,
+        pending_frontiers_by_species=pending_frontiers_by_species,
+    )
+
+    out = {
+        "round_id": round_id,
+        "seed_species": seed_species,
+        "current_reference": current_reference,
+        "reference_species": current_reference,
+        "reference_order": reference_order,
+        "used_reference_species": updated_used,
+        "new_consensus_by_species": {
+            sp: [
+                {
+                    "species": c.species,
+                    "seqid": c.seqid,
+                    "strand": c.strand,
+                    "support_count": c.support_count,
+                    "total_chain_score": c.total_chain_score,
+                    "mean_exon_recovery": c.mean_exon_recovery,
+                    "source_transcripts": c.source_transcripts,
+                    "exons": c.exons,
+                }
+                for c in cs
+            ]
+            for sp, cs in new_consensus_by_species.items()
+        },
+        "fragmented_by_species": fragmented_by_species,
+        "orphan_loci_by_species": orphan_loci_by_species,
+        "pending_frontiers_by_species": pending_frontiers_by_species,
+        "pending_seeds_by_species": pending_frontiers_by_species,
+        "next_reference_species": next_reference,
+        "stop": next_reference is None,
+    }
+
+    ref_out_path = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{current_reference}"
+        / "post_round_decision.json"
+    )
+    round_out_path = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / "post_round_decision.json"
+    )
+
+    write_json(ref_out_path, out)
+    write_json(round_out_path, out)
+
+    round_ref_dir = (
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{current_reference}"
+    )
+
+    write_new_loci_gff3(round_ref_dir, out)
+    write_fragmented_loci_table(round_ref_dir, out)
+    finalize_round_outputs(workdir, round_id)
+
+    return str(ref_out_path)
+
 
 def schedule_target_batches(
     job,
