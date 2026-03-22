@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-@dataclass
+@dataclass(frozen=True)
 class URCATConfig:
     seed_species: str
     hal_path: str
@@ -21,10 +21,16 @@ def _require_file(path: Path, label: str) -> None:
         raise FileNotFoundError(f"{label} not found: {path}")
 
 
+def _normalize_path(value: str, config_dir: Path) -> str:
+    p = Path(value)
+    if not p.is_absolute():
+        p = (config_dir / p).resolve()
+    else:
+        p = p.resolve()
+    return str(p)
+
+
 def get_hal_species_list(hal_path: str) -> list[str]:
-    """
-    Return all species/genomes in the HAL file using halStats --genomes.
-    """
     result = subprocess.run(
         ["halStats", "--genomes", str(hal_path)],
         check=True,
@@ -37,35 +43,19 @@ def get_hal_species_list(hal_path: str) -> list[str]:
     return species
 
 
-def _normalize_path(value: str, config_dir: Path) -> str:
-    p = Path(value)
-    if not p.is_absolute():
-        p = (config_dir / p).resolve()
-    else:
-        p = p.resolve()
-    return str(p)
-
-
 def _parse_annotation_section(
     cp: configparser.ConfigParser,
     config_dir: Path,
-    species_list: list[str],
 ) -> dict[str, str]:
-    """
-    Parse:
-      [annotation]
-      Hmel = data/Hmel.test.gff3
-      Eisa = data/Eisa.test.gff3
-    Missing species are allowed.
-    """
     paths: dict[str, str] = {}
 
     if not cp.has_section("annotation"):
         return paths
 
+    # optionxform=str preserves case and insertion order
     for species, raw_path in cp.items("annotation"):
         species_name = species.strip()
-        if species_name not in species_list:
+        if not species_name:
             continue
         paths[species_name] = _normalize_path(raw_path.strip(), config_dir)
 
@@ -77,22 +67,12 @@ def _parse_evidence_section(
     config_dir: Path,
     species_list: list[str],
 ) -> dict[str, dict[str, str]]:
-    """
-    Parse:
-      [evidence]
-      Hmel_bam = data/Hmel.bam
-      Eisa_bam = data/Eisa.bam
-
-    Returns:
-      {
-        "Hmel": {"bam": "/abs/path/Hmel.bam"},
-        "Eisa": {"bam": "/abs/path/Eisa.bam"},
-      }
-    """
     evidence: dict[str, dict[str, str]] = {sp: {} for sp in species_list}
 
     if not cp.has_section("evidence"):
         return evidence
+
+    allowed = set(species_list)
 
     for key, raw_path in cp.items("evidence"):
         key = key.strip()
@@ -102,7 +82,7 @@ def _parse_evidence_section(
             continue
 
         species, evtype = key.split("_", 1)
-        if species not in evidence:
+        if species not in allowed:
             continue
 
         evidence[species][evtype] = _normalize_path(value, config_dir)
@@ -112,22 +92,11 @@ def _parse_evidence_section(
 
 def load_urcat_config(config_path: str) -> URCATConfig:
     """
-    Expected format:
-
-    [input]
-    seedSpecies = Hmel
-    halPath = data/3SpChr21.hal
-    batchSize = 5
-
-    [annotation]
-    Hmel = data/Hmel.test.gff3
-    Eisa = data/Eisa.test.gff3
-    Diul = data/Diul.test.gff3
-
-    [evidence]
-    Hmel_bam = data/Hmel.bam
-    Eisa_bam = data/Eisa.bam
-    Diul_bam = data/Diul.bam
+    Contract:
+      - [input] seedSpecies, halPath, optional batchSize
+      - [annotation] defines the species participating in the run
+      - HAL is used to validate species membership
+      - if [annotation] is absent/empty, species_list falls back to HAL genomes
     """
     config_file = Path(config_path).resolve()
     _require_file(config_file, "Config file")
@@ -158,14 +127,31 @@ def load_urcat_config(config_path: str) -> URCATConfig:
     except ValueError as e:
         raise ValueError(f"Invalid batchSize: {batch_size_raw}") from e
 
-    species_list = get_hal_species_list(hal_path)
+    hal_species = get_hal_species_list(hal_path)
+    hal_species_set = set(hal_species)
+
+    annotation_paths = _parse_annotation_section(cp, config_file.parent)
+
+    if annotation_paths:
+        species_list = list(annotation_paths.keys())
+        unknown = [sp for sp in species_list if sp not in hal_species_set]
+        if unknown:
+            raise ValueError(
+                f"Species present in [annotation] but absent from HAL: {unknown}"
+            )
+    else:
+        species_list = hal_species
+
+    if seed_species not in hal_species_set:
+        raise ValueError(
+            f"seedSpecies '{seed_species}' is not present in HAL species list: {hal_species}"
+        )
 
     if seed_species not in species_list:
         raise ValueError(
-            f"seedSpecies '{seed_species}' is not present in HAL species list: {species_list}"
+            f"seedSpecies '{seed_species}' must be included in participating species: {species_list}"
         )
 
-    annotation_paths = _parse_annotation_section(cp, config_file.parent, species_list)
     evidence = _parse_evidence_section(cp, config_file.parent, species_list)
 
     return URCATConfig(
