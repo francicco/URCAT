@@ -1182,21 +1182,15 @@ def schedule_round_from_manifest(
 def run_round_zero(
     job,
     workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
-    seed_species,
-    batch_size,
+    cfg,
 ):
-    species_list = get_species_list(species_csv)
-    targets = [sp for sp in species_list if sp != seed_species]
+    seed_species = cfg.seed_species
+    targets = [sp for sp in cfg.species_list if sp != seed_species]
 
     frontier_job = job.addChildJobFn(
         write_seed_frontier,
         workdir,
-        annotation_dir,
-        annotation_suffix,
+        cfg.annotation_paths,
         seed_species,
         memory="2G",
         disk="2G",
@@ -1208,7 +1202,7 @@ def run_round_zero(
         frontier_job.rv(),
         seed_species,
         targets,
-        batch_size,
+        cfg.batch_size,
         memory="2G",
         disk="2G",
     )
@@ -1216,14 +1210,11 @@ def run_round_zero(
     round_job = manifest_job.addFollowOnJobFn(
         schedule_round_from_manifest,
         workdir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
+        cfg,
         seed_species,
         manifest_job.rv(),
         [seed_species],
-        batch_size,
+        cfg.batch_size,
         memory="2G",
         disk="2G",
     )
