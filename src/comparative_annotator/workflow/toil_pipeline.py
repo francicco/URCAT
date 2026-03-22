@@ -746,6 +746,7 @@ def annotate_missing_loci_and_choose_next(
             fragmented_entries.append(
                 summarize_projected_blocks(
                     source_species=source_species_key,
+                    target_species=target_species,
                     source_transcripts=list(source_transcripts_key),
                     blocks=blocks,
                 )
