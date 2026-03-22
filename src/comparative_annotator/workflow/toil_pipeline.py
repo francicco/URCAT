@@ -42,6 +42,58 @@ class FrontierSeedTranscript:
     strand: str
     exons: list
 
+import configparser
+import sys
+from pathlib import Path
+
+
+def apply_config_overrides(args):
+    if not args.config:
+        return args
+
+    cfg_path = Path(args.config)
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Config file not found: {cfg_path}")
+
+    cp = configparser.ConfigParser()
+    cp.read(cfg_path)
+
+    cfg = {}
+
+    # Accept values from DEFAULT plus any common section names
+    for section_name in ["DEFAULT", "input", "inputs", "urcat", "main"]:
+        if section_name == "DEFAULT":
+            items = cp.defaults().items()
+        elif cp.has_section(section_name):
+            items = cp.items(section_name)
+        else:
+            continue
+
+        for k, v in items:
+            cfg[k.strip().lower()] = v.strip()
+
+    def cfg_get(*names, cast=None):
+        for name in names:
+            key = name.lower()
+            if key in cfg and cfg[key] != "":
+                value = cfg[key]
+                return cast(value) if cast else value
+        return None
+
+    if getattr(args, "seedSpecies", None) is None:
+        args.seedSpecies = cfg_get("seedSpecies", "seedspecies")
+    if getattr(args, "speciesCsv", None) is None:
+        args.speciesCsv = cfg_get("speciesCsv", "speciescsv")
+    if getattr(args, "halPath", None) is None:
+        args.halPath = cfg_get("halPath", "halpath")
+    if getattr(args, "annotationDir", None) is None:
+        args.annotationDir = cfg_get("annotationDir", "annotationdir")
+    if getattr(args, "annotationSuffix", None) is None:
+        args.annotationSuffix = cfg_get("annotationSuffix", "annotationsuffix")
+    if getattr(args, "batchSize", None) is None:
+        args.batchSize = cfg_get("batchSize", "batchsize", cast=int)
+
+    return args
 
 def read_json(path):
     path = Path(path)
@@ -1174,6 +1226,7 @@ def run_round_zero(
 
 
 def main():
+    import sys
     from argparse import ArgumentParser
     from configparser import ConfigParser
 
