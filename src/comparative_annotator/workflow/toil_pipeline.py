@@ -908,6 +908,7 @@ def annotate_missing_loci_and_choose_next(
         frag_path = round_ref_dir / f"{target_species}.fragmented_loci.tsv"
         write_fragmented_loci_table(
             str(frag_path),
+            round_id,
             current_reference,
             target_species,
             loci,
