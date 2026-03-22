@@ -1223,10 +1223,9 @@ def run_round_zero(
 
 
 def main():
+    import sys
     from argparse import ArgumentParser
     from pathlib import Path
-    from toil.common import Toil
-    from toil.job import Job
 
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
@@ -1241,19 +1240,34 @@ def main():
 
     args = parser.parse_args()
 
-    from comparative_annotator.workflow.config import load_urcat_config
+    config_path = None
+    argv = sys.argv[1:]
+    for i, token in enumerate(argv):
+        if token == "--config" and i + 1 < len(argv):
+            config_path = argv[i + 1]
+            break
+        if token.startswith("--config="):
+            config_path = token.split("=", 1)[1]
+            break
 
-    if not getattr(args, "config", None):
+    if config_path is None:
         parser.error("--config is required")
 
-    cfg = load_urcat_config(args.config)
+    from comparative_annotator.workflow.config import load_urcat_config
+    cfg = load_urcat_config(config_path)
 
     output_dir = str(Path(args.outputDir).resolve())
+
     seed_species = args.seedSpecies or cfg.seed_species
     species_csv = args.speciesCsv or ",".join(cfg.species)
-    hal_path = args.halPath or cfg.hal_path
-    annotation_dir = args.annotationDir or cfg.annotation_dir
-    annotation_suffix = args.annotationSuffix or cfg.annotation_suffix
+    hal_path = str(Path(args.halPath or cfg.hal_path).resolve())
+
+    annotation_dir_value = args.annotationDir or cfg.annotation_dir
+    if annotation_dir_value is None:
+        parser.error("--annotationDir is required unless your downstream code has been fully migrated to per-species annotation paths")
+    annotation_dir = str(Path(annotation_dir_value).resolve())
+
+    annotation_suffix = args.annotationSuffix or cfg.annotation_suffix or ".test.gff3"
     batch_size = args.batchSize if args.batchSize is not None else cfg.batch_size
 
     missing = []
