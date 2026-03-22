@@ -434,6 +434,10 @@ def build_target_edge_evidence(
         species_list=species_list,
     )
 
+    for species, seqs in sequences_by_species.items():
+    if not seqs.get("has_annotation"):
+        continue
+        
     source_species_list = sorted({row[0] for row in candidate_pairs})
     diamond_cache = build_diamond_cache_for_target(
         workdir=workdir,
