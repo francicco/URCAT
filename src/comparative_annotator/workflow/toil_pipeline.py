@@ -39,11 +39,6 @@ from comparative_annotator.workflow.analysis_tables import (
 
 from comparative_annotator.workflow.final_gff3 import write_final_species_gff3s
 
-from comparative_annotator.workflow.new_loci_gff3 import (
-    write_round_new_loci_gff3,
-    copy_original_plus_new_to_final,
-)
-
 @dataclass
 class FrontierSeedTranscript:
     transcript_id: str
