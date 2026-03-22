@@ -9,6 +9,7 @@ from toil.common import Toil
 from toil.job import Job
 
 from comparative_annotator.io.gff3 import load_gff3
+from comparative_annotator.models.transcript import CandidateTranscript
 from comparative_annotator.io.hal import HALAdapter
 from comparative_annotator.loci.species_loci import build_species_loci
 from comparative_annotator.missing.consensus import (
@@ -77,12 +78,24 @@ def append_unique_preserve_order(items, value):
     return out
 
 
-def load_transcripts_for_species(annotation_dir: str, annotation_suffix: str, species: str):
+def load_transcripts_for_species(
+    annotation_dir: str,
+    annotation_suffix: str,
+    species: str,
+) -> dict[str, CandidateTranscript]:
     gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix}").resolve()
+
+    if not gff_path.exists():
+        return {}
+
     return load_gff3(str(gff_path), species=species)
 
 
-def load_all_transcripts(annotation_dir: str, annotation_suffix: str, species_list: list[str]):
+def load_all_transcripts(
+    annotation_dir: str,
+    annotation_suffix: str,
+    species_list: list[str],
+) -> dict[str, dict[str, CandidateTranscript]]:
     return {
         sp: load_transcripts_for_species(annotation_dir, annotation_suffix, sp)
         for sp in species_list
