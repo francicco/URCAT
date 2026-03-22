@@ -899,10 +899,15 @@ def annotate_missing_loci_and_choose_next(
         / f"ref_{current_reference}"
     )
 
-    write_new_loci_gff3(round_ref_dir, out)
+    for target_species, loci in new_consensus_by_species.items():
+        write_new_loci_gff3(
+            round_ref_dir=round_ref_dir,
+            target_species=target_species,
+            loci=loci,
+        )
+
     write_fragmented_loci_table(round_ref_dir, out)
     finalize_round_outputs(workdir, round_id)
-
     return str(ref_out_path)
 
 
