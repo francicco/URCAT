@@ -1224,22 +1224,50 @@ def run_round_zero(
 
 def main():
     from argparse import ArgumentParser
+    from pathlib import Path
+    from toil.common import Toil
+    from toil.job import Job
 
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
-    parser.add_argument("--config", required=True)
+    # DO NOT add --config again if it already exists
+    # parser.add_argument("--config", required=True)
+
     parser.add_argument("--outputDir", required=True)
+    parser.add_argument("--seedSpecies", default=None)
+    parser.add_argument("--speciesCsv", default=None)
+    parser.add_argument("--halPath", default=None)
+    parser.add_argument("--annotationDir", default=None)
+    parser.add_argument("--annotationSuffix", default=None)
+    parser.add_argument("--batchSize", type=int, default=None)
 
     args = parser.parse_args()
 
+    if not getattr(args, "config", None):
+        parser.error("--config is required")
+
+    from comparative_annotator.workflow.config import load_urcat_config
+
     cfg = load_urcat_config(args.config)
+
     output_dir = str(Path(args.outputDir).resolve())
+    seed_species = args.seedSpecies or cfg.seed_species
+    species_csv = args.speciesCsv or ",".join(cfg.species)
+    hal_path = args.halPath or cfg.hal_path
+    annotation_dir = args.annotationDir or cfg.annotation_dir
+    annotation_suffix = args.annotationSuffix or cfg.annotation_suffix
+    batch_size = args.batchSize if args.batchSize is not None else cfg.batch_size
 
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
-        cfg,
+        annotation_dir,
+        annotation_suffix,
+        hal_path,
+        species_csv,
+        seed_species,
+        batch_size,
         memory="2G",
         disk="2G",
     )
@@ -1248,9 +1276,10 @@ def main():
         toil.start(root)
 
     write_final_species_gff3s(
-        output_dir=output_dir,
-        annotation_paths=cfg.annotation_paths,
-        species_list=cfg.species_list,
+        output_dir,
+        annotation_dir,
+        annotation_suffix,
+        species_csv,
     )
 
 if __name__ == "__main__":
