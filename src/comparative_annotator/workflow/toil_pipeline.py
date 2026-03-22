@@ -8,16 +8,14 @@ from pathlib import Path
 from toil.common import Toil
 from toil.job import Job
 
-from comparative_annotator.workflow.config import load_urcat_config
+from comparative_annotator.workflow.config import URCATConfig, load_urcat_config
 from comparative_annotator.workflow.annotation_sources import (
     load_all_transcripts,
     build_all_species_loci,
 )
-
+from comparative_annotator.io.hal import HALAdapter
 from comparative_annotator.io.gff3 import load_gff3
 from comparative_annotator.models.transcript import CandidateTranscript
-from comparative_annotator.io.hal import HALAdapter
-from comparative_annotator.loci.species_loci import build_species_loci
 from comparative_annotator.missing.consensus import (
     build_consensus_missing_transcript,
     choose_missing_locus_strand,
@@ -48,58 +46,6 @@ class FrontierSeedTranscript:
     strand: str
     exons: list
 
-import configparser
-import sys
-from pathlib import Path
-
-
-def apply_config_overrides(args):
-    config_path = getattr(args, "config", None)
-    if not config_path:
-        return args
-
-    cfg_path = Path(config_path)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"Config file not found: {cfg_path}")
-
-    cp = configparser.ConfigParser()
-    cp.read(cfg_path)
-
-    cfg = {}
-
-    for section_name in ["DEFAULT", "input", "inputs", "urcat", "main"]:
-        if section_name == "DEFAULT":
-            items = cp.defaults().items()
-        elif cp.has_section(section_name):
-            items = cp.items(section_name)
-        else:
-            continue
-
-        for k, v in items:
-            cfg[k.strip().lower()] = v.strip()
-
-    def cfg_get(*names, cast=None):
-        for name in names:
-            key = name.lower()
-            if key in cfg and cfg[key] != "":
-                value = cfg[key]
-                return cast(value) if cast else value
-        return None
-
-    if getattr(args, "seedSpecies", None) in (None, ""):
-        args.seedSpecies = cfg_get("seedSpecies", "seedspecies")
-    if getattr(args, "speciesCsv", None) in (None, ""):
-        args.speciesCsv = cfg_get("speciesCsv", "speciescsv")
-    if getattr(args, "halPath", None) in (None, ""):
-        args.halPath = cfg_get("halPath", "halpath")
-    if getattr(args, "annotationDir", None) in (None, ""):
-        args.annotationDir = cfg_get("annotationDir", "annotationdir")
-    if getattr(args, "annotationSuffix", None) in (None, ""):
-        args.annotationSuffix = cfg_get("annotationSuffix", "annotationsuffix")
-    if getattr(args, "batchSize", None) in (None, ""):
-        args.batchSize = cfg_get("batchSize", "batchsize", cast=int)
-
-    return args
 
 def read_json(path):
     path = Path(path)
@@ -119,57 +65,11 @@ def chunked(items, size):
         yield items[i:i + size]
 
 
-def get_species_list(species_csv: str):
-    return [x.strip() for x in species_csv.split(",") if x.strip()]
-
-
 def append_unique_preserve_order(items, value):
     out = list(items)
     if value not in out:
         out.append(value)
     return out
-
-
-def load_transcripts_for_species(
-    annotation_dir: str | None,
-    annotation_suffix: str | None,
-    species: str,
-    annotation_paths: dict[str, str] | None = None,
-) -> dict[str, CandidateTranscript]:
-    if annotation_paths is not None:
-        gff_path_str = annotation_paths.get(species, "")
-        gff_path = Path(gff_path_str) if gff_path_str else None
-    elif annotation_dir is not None:
-        gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix or ''}").resolve()
-    else:
-        return {}
-    if gff_path is None or not gff_path.exists():
-        return {}
-    return load_gff3(str(gff_path), species=species)
-
-
-def load_all_transcripts(
-    annotation_dir: str | None,
-    annotation_suffix: str | None,
-    species_list: list[str],
-    annotation_paths: dict[str, str] | None = None,
-) -> dict[str, dict[str, CandidateTranscript]]:
-    return {
-        sp: load_transcripts_for_species(
-            annotation_dir, annotation_suffix, sp,
-            annotation_paths=annotation_paths,
-        )
-        for sp in species_list
-    }
-
-
-def build_all_species_loci(
-    transcripts_by_species: dict[str, dict[str, CandidateTranscript]],
-):
-    return {
-        sp: build_species_loci(list(txdict.values()), species=sp)
-        for sp, txdict in transcripts_by_species.items()
-    }
 
 
 def get_hal_tree_newick(hal_path: str) -> str:
@@ -199,225 +99,8 @@ def build_consensus_seed(item):
     )
 
 
-def collect_explained_locus_ids_from_round(round_merged_json):
-    explained = {}
-
-    for target_block in round_merged_json["targets"]:
-        target_species = target_block["target_species"]
-        explained_ids = set()
-
-        for r in target_block["results"]:
-            if r.get("status") != "ok":
-                continue
-
-            for sp, locus_id in r.get("primary", {}).items():
-                if sp == target_species and locus_id:
-                    explained_ids.add(locus_id)
-
-            for sp, locus_ids in r.get("alternatives", {}).items():
-                if sp == target_species:
-                    explained_ids.update(locus_ids)
-
-        explained[target_species] = explained_ids
-
-    return explained
-
-
-def collect_projected_transcript_spans_for_species(
-    transcripts_by_species,
-    source_species_list,
-    target_species,
-    hal,
-):
-    spans = []
-
-    for source_species in source_species_list:
-        if source_species == target_species:
-            continue
-
-        for _, seed in transcripts_by_species.get(source_species, {}).items():
-            projected_exon_blocks = []
-
-            for exon_start, exon_end in seed.exons:
-                intervals = hal.project_interval(
-                    source_species=seed.species,
-                    target_species=target_species,
-                    seqid=seed.seqid,
-                    start=exon_start,
-                    end=exon_end,
-                    strand=seed.strand,
-                    source_transcript=seed.transcript_id,
-                )
-                projected_exon_blocks.append(intervals)
-
-            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
-            for pt in pts:
-                spans.append(
-                    {
-                        "seqid": pt.seqid,
-                        "start": pt.start,
-                        "end": pt.end,
-                        "strand": pt.strand,
-                        "source_species": source_species,
-                        "source_transcript": pt.source_transcript,
-                    }
-                )
-
-    return spans
-
-
-def build_round_summary(round_merged, decision):
-    reference_species = round_merged["reference_species"]
-    round_id = round_merged["round_id"]
-
-    targets_summary = {}
-
-    for target_block in round_merged["targets"]:
-        target_species = target_block["target_species"]
-        results = target_block["results"]
-
-        n_processed = len(results)
-        n_ok = sum(1 for r in results if r.get("status") == "ok")
-        n_error = sum(1 for r in results if r.get("status") == "error")
-
-        n_primary = sum(
-            1
-            for r in results
-            if r.get("status") == "ok" and bool(r.get("primary"))
-        )
-
-        n_alternative_only = sum(
-            1
-            for r in results
-            if r.get("status") == "ok"
-            and not bool(r.get("primary"))
-            and bool(r.get("alternatives"))
-        )
-
-        n_missing = sum(
-            1
-            for r in results
-            if r.get("status") == "ok" and bool(r.get("missing_annotations"))
-        )
-
-        n_strand_conflict = sum(
-            1
-            for r in results
-            if r.get("status") == "ok" and bool(r.get("strand_conflicts"))
-        )
-
-        n_new_consensus = len(decision.get("new_consensus_by_species", {}).get(target_species, []))
-        n_orphan_loci = len(decision.get("orphan_loci_by_species", {}).get(target_species, []))
-        n_pending_frontier = len(decision.get("pending_frontiers_by_species", {}).get(target_species, []))
-
-        targets_summary[target_species] = {
-            "n_processed": n_processed,
-            "n_ok": n_ok,
-            "n_error": n_error,
-            "n_primary": n_primary,
-            "n_alternative_only": n_alternative_only,
-            "n_missing": n_missing,
-            "n_strand_conflict": n_strand_conflict,
-            "n_new_consensus": n_new_consensus,
-            "n_orphan_loci": n_orphan_loci,
-            "n_pending_frontier": n_pending_frontier,
-        }
-
-    return {
-        "round_id": round_id,
-        "seed_species": decision["seed_species"],
-        "reference_species": reference_species,
-        "reference_order": decision["reference_order"],
-        "used_reference_species": decision["used_reference_species"],
-        "next_reference_species": decision["next_reference_species"],
-        "stop": decision["stop"],
-        "targets": targets_summary,
-    }
-
-
-def finalize_round_outputs(output_dir: str, round_id: int) -> None:
-    round_dir = get_round_dir(output_dir, round_id)
-    write_all_analysis_tables_for_round(round_dir)
-
-
-def write_round_summary(job, workdir, round_merged_path, decision_path):
-    round_merged = read_json(round_merged_path)
-    decision = read_json(decision_path)
-
-    summary = build_round_summary(round_merged, decision)
-
-    round_id = summary["round_id"]
-    reference_species = summary["reference_species"]
-
-    ref_dir = (
-        Path(workdir)
-        / "rounds"
-        / f"round_{round_id:03d}"
-        / f"ref_{reference_species}"
-    )
-    round_dir = Path(workdir) / "rounds" / f"round_{round_id:03d}"
-
-    json_paths = [ref_dir / "summary.json", round_dir / "summary.json"]
-    tsv_paths = [ref_dir / "summary.tsv", round_dir / "summary.tsv"]
-
-    for json_path in json_paths:
-        write_json(json_path, summary)
-
-    header = [
-        "round_id",
-        "seed_species",
-        "reference_species",
-        "target_species",
-        "n_processed",
-        "n_ok",
-        "n_error",
-        "n_primary",
-        "n_alternative_only",
-        "n_missing",
-        "n_strand_conflict",
-        "n_new_consensus",
-        "n_orphan_loci",
-        "n_pending_frontier",
-        "next_reference_species",
-        "stop",
-    ]
-
-    for tsv_path in tsv_paths:
-        tsv_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(tsv_path, "w") as fh:
-            fh.write("\t".join(header) + "\n")
-            for target_species, stats in summary["targets"].items():
-                fh.write(
-                    "\t".join(
-                        [
-                            str(summary["round_id"]),
-                            str(summary["seed_species"]),
-                            str(summary["reference_species"]),
-                            str(target_species),
-                            str(stats["n_processed"]),
-                            str(stats["n_ok"]),
-                            str(stats["n_error"]),
-                            str(stats["n_primary"]),
-                            str(stats["n_alternative_only"]),
-                            str(stats["n_missing"]),
-                            str(stats["n_strand_conflict"]),
-                            str(stats["n_new_consensus"]),
-                            str(stats["n_orphan_loci"]),
-                            str(stats["n_pending_frontier"]),
-                            str(summary["next_reference_species"]),
-                            str(summary["stop"]),
-                        ]
-                    )
-                    + "\n"
-                )
-
-    return str(json_paths[0])
-
-
 def write_seed_frontier(job, workdir, annotation_paths, seed_species):
-    """annotation_paths is a dict mapping species -> GFF3 path."""
     gff_path = annotation_paths.get(seed_species, "")
-    from comparative_annotator.io.gff3 import load_gff3
     tx = load_gff3(gff_path, species=seed_species) if gff_path else {}
     out = {
         "round_id": 0,
@@ -425,13 +108,8 @@ def write_seed_frontier(job, workdir, annotation_paths, seed_species):
         "frontier_kind": "seed_all_transcripts",
         "transcript_ids": sorted(tx.keys()),
     }
-
     path = (
-        Path(workdir)
-        / "rounds"
-        / "round_000"
-        / f"ref_{seed_species}"
-        / "frontier.json"
+        Path(workdir) / "rounds" / "round_000" / f"ref_{seed_species}" / "frontier.json"
     )
     write_json(path, out)
     return str(path)
@@ -445,14 +123,12 @@ def write_species_frontier_from_pending(
     round_id,
 ):
     pending = pending_frontiers_by_species.get(reference_species, [])
-
     frontier = {
         "round_id": round_id,
         "reference_species": reference_species,
         "frontier_kind": "mixed_pending",
         "items": pending,
     }
-
     path = (
         Path(workdir)
         / "rounds"
@@ -486,8 +162,8 @@ def write_manifest(
         raise ValueError(f"Unknown frontier kind: {frontier['frontier_kind']}")
 
     batches = list(chunked(items, batch_size))
-
     jobs = []
+
     for target in target_species_list:
         for batch_id, batch_items in enumerate(batches):
             batch_file = (
@@ -499,7 +175,6 @@ def write_manifest(
                 / f"batch_{batch_id:03d}.items.json"
             )
             write_json(batch_file, {"items": batch_items})
-
             jobs.append(
                 {
                     "round_id": round_id,
@@ -531,24 +206,20 @@ def write_manifest(
 def run_project_batch(
     job,
     workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
+    cfg: URCATConfig,
     round_id,
     reference_species,
     target_species,
     batch_items_path,
     batch_id,
 ):
-    species_list = get_species_list(species_csv)
-    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+    species_list = cfg.species_list
+    transcripts_by_species = load_all_transcripts(cfg.annotation_paths, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
-    hal = HALAdapter(str(Path(hal_path).resolve()))
+    hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
 
     batch_info = read_json(batch_items_path)
     items = batch_info["items"]
-
     results = []
 
     for item in items:
@@ -556,16 +227,13 @@ def run_project_batch(
             if item["kind"] == "native_transcript":
                 source_label = item["transcript_id"]
                 seed = transcripts_by_species[reference_species][item["transcript_id"]]
-
             elif item["kind"] == "urcat_consensus":
                 source_label = ",".join(item.get("source_transcripts", [])) or "URCAT_CONSENSUS"
                 seed = build_consensus_seed(item)
-
             elif item["kind"] == "orphan_native_locus":
                 tx_id = item["transcripts"][0]
                 source_label = tx_id
                 seed = transcripts_by_species[reference_species][tx_id]
-
             else:
                 raise ValueError(f"Unknown seed kind: {item['kind']}")
 
@@ -590,7 +258,6 @@ def run_project_batch(
                 "primary_transcripts": getattr(clocus, "primary_transcripts", {}),
                 "alternative_transcripts": getattr(clocus, "alternative_transcripts", {}),
             }
-
         except Exception as e:
             result = {
                 "source_species": reference_species,
@@ -626,7 +293,6 @@ def run_project_batch(
 
 def merge_target_results(job, workdir, round_id, reference_species, target_species, batch_result_paths):
     batch_results = [read_json(p) for p in batch_result_paths]
-
     merged_results = []
     for batch in batch_results:
         merged_results.extend(batch["results"])
@@ -655,18 +321,14 @@ def merge_target_results(job, workdir, round_id, reference_species, target_speci
 def run_target_edge_evidence(
     job,
     workdir: str,
-    annotation_dir: str,
-    annotation_suffix: str,
-    hal_path: str,
-    species_csv: str,
+    cfg: URCATConfig,
     merged_target_path: str,
 ) -> str:
     edge_json_path = build_target_edge_evidence(
         workdir=workdir,
-        annotation_dir=annotation_dir,
-        annotation_suffix=annotation_suffix,
-        hal_path=hal_path,
-        species_csv=species_csv,
+        annotation_paths=cfg.annotation_paths,
+        hal_path=cfg.hal_path,
+        species_list=cfg.species_list,
         merged_target_path=merged_target_path,
     )
     target_dir = Path(edge_json_path).parent
@@ -713,10 +375,7 @@ def merge_round_results(job, workdir, round_id, reference_species, merged_target
 def annotate_missing_loci_and_choose_next(
     job,
     workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
+    cfg: URCATConfig,
     round_id,
     current_reference,
     round_merged_path,
@@ -726,10 +385,10 @@ def annotate_missing_loci_and_choose_next(
     from comparative_annotator.workflow.fragmented_loci_table import write_fragmented_loci_table
     from comparative_annotator.workflow.fragmented_projection import summarize_projected_blocks
 
-    species_list = get_species_list(species_csv)
-    transcripts_by_species = load_all_transcripts(annotation_dir, annotation_suffix, species_list)
+    species_list = cfg.species_list
+    transcripts_by_species = load_all_transcripts(cfg.annotation_paths, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
-    hal = HALAdapter(str(Path(hal_path).resolve()))
+    hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
 
     round_merged = read_json(round_merged_path)
     missing_by_target = extract_missing_locus_payloads(round_merged)
@@ -796,21 +455,15 @@ def annotate_missing_loci_and_choose_next(
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
             consensuses = []
-
             for cluster in clusters:
                 best_strand, _ = choose_missing_locus_strand(cluster)
-                consensus = build_consensus_missing_transcript(cluster, best_strand)
-                consensuses.append(consensus)
-
+                consensuses.append(build_consensus_missing_transcript(cluster, best_strand))
             if consensuses:
                 new_consensus_by_species[target_species] = consensuses
 
         grouped_fragmented = {}
         for row in projected_blocks_for_summary:
-            key = (
-                row["source_species"],
-                tuple(sorted([row["source_transcript"]])),
-            )
+            key = (row["source_species"], tuple(sorted([row["source_transcript"]])))
             grouped_fragmented.setdefault(key, []).append(row)
 
         fragmented_entries = []
@@ -823,11 +476,9 @@ def annotate_missing_loci_and_choose_next(
                     blocks=blocks,
                 )
             )
-
         fragmented_by_species[target_species] = fragmented_entries
 
     updated_used = append_unique_preserve_order(used_reference_species, current_reference)
-
     orphan_loci_by_species = {}
     pending_frontiers_by_species = {}
 
@@ -891,18 +542,13 @@ def annotate_missing_loci_and_choose_next(
             )
 
         for o in orphan_loci_by_species.get(sp, []):
-            pending.append(
-                {
-                    "kind": "orphan_native_locus",
-                    **o,
-                }
-            )
+            pending.append({"kind": "orphan_native_locus", **o})
 
         if pending:
             pending_frontiers_by_species[sp] = pending
 
     seed_species = updated_used[0]
-    tree_newick = get_hal_tree_newick(hal_path)
+    tree_newick = get_hal_tree_newick(cfg.hal_path)
     reference_order = compute_reference_order(
         seed_species=seed_species,
         species_tree_newick=tree_newick,
@@ -993,10 +639,7 @@ def annotate_missing_loci_and_choose_next(
 def schedule_target_batches(
     job,
     workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
+    cfg: URCATConfig,
     round_id,
     reference_species,
     target_species,
@@ -1010,10 +653,7 @@ def schedule_target_batches(
         batch_job = job.addChildJobFn(
             run_project_batch,
             workdir,
-            annotation_dir,
-            annotation_suffix,
-            hal_path,
-            species_csv,
+            cfg,
             round_id,
             reference_species,
             target_species,
@@ -1038,10 +678,7 @@ def schedule_target_batches(
     merge_job.addFollowOnJobFn(
         run_target_edge_evidence,
         workdir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
+        cfg,
         merge_job.rv(),
         memory="4G",
         disk="4G",
@@ -1054,11 +691,7 @@ def schedule_next_round(
     job,
     decision_path,
     workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
-    batch_size,
+    cfg: URCATConfig,
 ):
     decision = read_json(decision_path)
 
@@ -1083,8 +716,8 @@ def schedule_next_round(
         workdir,
         frontier_job.rv(),
         next_ref,
-        [sp for sp in get_species_list(species_csv) if sp != next_ref],
-        batch_size,
+        [sp for sp in cfg.species_list if sp != next_ref],
+        cfg.batch_size,
         memory="2G",
         disk="2G",
     )
@@ -1092,14 +725,10 @@ def schedule_next_round(
     next_round_job = manifest_job.addFollowOnJobFn(
         schedule_round_from_manifest,
         workdir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
+        cfg,
         next_ref,
         manifest_job.rv(),
         decision["used_reference_species"],
-        batch_size,
         memory="2G",
         disk="2G",
     )
@@ -1110,30 +739,21 @@ def schedule_next_round(
 def schedule_round_from_manifest(
     job,
     workdir,
-    annotation_dir,
-    annotation_suffix,
-    hal_path,
-    species_csv,
+    cfg: URCATConfig,
     reference_species,
     manifest_path,
     used_reference_species,
-    batch_size,
 ):
     manifest = read_json(manifest_path)
     round_id = manifest["round_id"]
-
-    species_list = get_species_list(species_csv)
-    targets = [sp for sp in species_list if sp != reference_species]
+    targets = [sp for sp in cfg.species_list if sp != reference_species]
 
     target_merge_rvs = []
     for target in targets:
         target_job = job.addChildJobFn(
             schedule_target_batches,
             workdir,
-            annotation_dir,
-            annotation_suffix,
-            hal_path,
-            species_csv,
+            cfg,
             round_id,
             reference_species,
             target,
@@ -1156,10 +776,7 @@ def schedule_round_from_manifest(
     decision_job = round_merge_job.addFollowOnJobFn(
         annotate_missing_loci_and_choose_next,
         workdir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
+        cfg,
         round_id,
         reference_species,
         round_merge_job.rv(),
@@ -1181,11 +798,7 @@ def schedule_round_from_manifest(
         schedule_next_round,
         decision_job.rv(),
         workdir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
-        batch_size,
+        cfg,
         memory="2G",
         disk="2G",
     )
@@ -1193,21 +806,10 @@ def schedule_round_from_manifest(
     return next_round_job.rv()
 
 
-def run_round_zero(
-    job,
-    workdir,
-    cfg,
-):
-    """
-    Entry point for round 0. cfg is a URCATConfig instance.
-    write_seed_frontier and schedule_round_from_manifest accept individual
-    string arguments, so we unpack cfg here.
-    """
+def run_round_zero(job, workdir, cfg: URCATConfig):
     seed_species = cfg.seed_species
     targets = [sp for sp in cfg.species_list if sp != seed_species]
-    species_csv = ",".join(cfg.species_list)
 
-    # write_seed_frontier needs annotation_paths as a dict (species -> path)
     frontier_job = job.addChildJobFn(
         write_seed_frontier,
         workdir,
@@ -1228,9 +830,8 @@ def run_round_zero(
         disk="2G",
     )
 
-    # schedule_round_from_manifest takes individual string params
     round_job = manifest_job.addFollowOnJobFn(
-        schedule_round_from_manifest_from_cfg,
+        schedule_round_from_manifest,
         workdir,
         cfg,
         seed_species,
@@ -1243,102 +844,23 @@ def run_round_zero(
     return round_job.rv()
 
 
-def schedule_round_from_manifest_from_cfg(
-    job,
-    workdir,
-    cfg,
-    reference_species,
-    manifest_path,
-    used_reference_species,
-):
-    """
-    Adapter: unpacks URCATConfig into the individual string arguments that
-    schedule_round_from_manifest expects.
-    """
-    return schedule_round_from_manifest(
-        job,
-        workdir,
-        annotation_dir=None,
-        annotation_suffix=None,
-        hal_path=cfg.hal_path,
-        species_csv=",".join(cfg.species_list),
-        reference_species=reference_species,
-        manifest_path=manifest_path,
-        used_reference_species=used_reference_species,
-        batch_size=cfg.batch_size,
-    )
-
-
 def main():
-    from argparse import ArgumentParser
-    from pathlib import Path
-    from toil.common import Toil
-    from toil.job import Job
-
-    parser = ArgumentParser()
-    Job.Runner.addToilOptions(parser)
-
+    parser = Job.Runner.getDefaultArgumentParser()
     parser.add_argument("--outputDir", required=True)
-    # Note: --config is already registered by Toil's configargparse integration
-    parser.add_argument("--seedSpecies", default=None)
-    parser.add_argument("--speciesCsv", default=None)
-    parser.add_argument("--halPath", default=None)
-    parser.add_argument("--annotationDir", default=None)
-    parser.add_argument("--annotationSuffix", default=None)
-    parser.add_argument("--batchSize", type=int, default=None)
 
     args = parser.parse_args()
 
-    from comparative_annotator.workflow.config import load_urcat_config, URCATConfig
-
-    if not args.config:
+    config_path = getattr(args, "config", None)
+    if not config_path:
         parser.error("--config is required")
 
-    cfg = load_urcat_config(args.config)
-
+    cfg = load_urcat_config(config_path)
     output_dir = str(Path(args.outputDir).resolve())
-    seed_species = args.seedSpecies or cfg.seed_species
-    species_csv = args.speciesCsv or ",".join(cfg.species_list)
-    hal_path = args.halPath or cfg.hal_path
-    batch_size = args.batchSize if args.batchSize is not None else cfg.batch_size
-
-    # annotation_paths: CLI --annotationDir/Suffix override or fall back to cfg
-    if args.annotationDir:
-        suffix = args.annotationSuffix or ""
-        annotation_paths = {
-            sp: f"{args.annotationDir}/{sp}{suffix}"
-            for sp in cfg.species_list
-        }
-    else:
-        annotation_paths = cfg.annotation_paths
-
-    missing = []
-    if not seed_species:
-        missing.append("--seedSpecies")
-    if not species_csv:
-        missing.append("--speciesCsv")
-    if not hal_path:
-        missing.append("--halPath")
-
-    if missing:
-        parser.error(
-            "the following arguments are required (via CLI or --config): "
-            + ", ".join(missing)
-        )
-
-    # Build a resolved config object for the pipeline
-    resolved_cfg = URCATConfig(
-        seed_species=seed_species,
-        hal_path=hal_path,
-        batch_size=batch_size,
-        species_list=cfg.species_list,
-        annotation_paths=annotation_paths,
-    )
 
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
-        resolved_cfg,
+        cfg,
         memory="2G",
         disk="2G",
     )
@@ -1348,9 +870,10 @@ def main():
 
     write_final_species_gff3s(
         output_dir=output_dir,
-        annotation_paths=resolved_cfg.annotation_paths,
-        species_list=resolved_cfg.species_list,
+        annotation_paths=cfg.annotation_paths,
+        species_list=cfg.species_list,
     )
+
 
 if __name__ == "__main__":
     main()
