@@ -902,8 +902,18 @@ def annotate_missing_loci_and_choose_next(
     for target_species, loci in new_consensus_by_species.items():
         if not loci:
             continue
-        write_new_loci_gff3(round_ref_dir, target_species, loci)
 
+        out_path = (
+            Path(workdir)
+            / "rounds"
+            / f"round_{round_id:03d}"
+            / f"ref_{current_reference}"
+            / f"target_{target_species}"
+            / f"{target_species}.new_loci.gff3"
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        write_new_loci_gff3(str(out_path), target_species, loci)
     write_fragmented_loci_table(round_ref_dir, out)
     finalize_round_outputs(workdir, round_id)
     return str(ref_out_path)
