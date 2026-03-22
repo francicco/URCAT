@@ -1211,10 +1211,10 @@ def main():
 
         species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
         write_final_species_gff3s(
-            output_dir=output_dir,
-            annotation_dir=annotation_dir,
-            annotation_suffix=options.annotationSuffix,
-            species_list=species_list,
+            output_dir,
+            annotation_dir,
+            options.annotationSuffix,
+            species_list,
         )
 
 
