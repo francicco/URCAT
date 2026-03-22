@@ -1,6 +1,17 @@
 """QC reporting utilities for URCAT."""
 from __future__ import annotations
 
+def read_json(path: str | Path):
+    path = Path(path)
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def write_json(path: str | Path, obj) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(obj, fh, indent=2, sort_keys=True)
 
 def format_projection_report(
     seed_transcript_id: str,
