@@ -844,44 +844,6 @@ def run_round_zero(job, workdir, cfg: URCATConfig):
     return round_job.rv()
 
 
-def run_round_zero(job, workdir, cfg: URCATConfig):
-    seed_species = cfg.seed_species
-    targets = [sp for sp in cfg.species_list if sp != seed_species]
-
-    frontier_job = job.addChildJobFn(
-        write_seed_frontier,
-        workdir,
-        cfg.annotation_paths,
-        seed_species,
-        memory="2G",
-        disk="2G",
-    )
-
-    manifest_job = frontier_job.addFollowOnJobFn(
-        write_manifest,
-        workdir,
-        frontier_job.rv(),
-        seed_species,
-        targets,
-        cfg.batch_size,
-        memory="2G",
-        disk="2G",
-    )
-
-    round_job = manifest_job.addFollowOnJobFn(
-        schedule_round_from_manifest,
-        workdir,
-        cfg,
-        seed_species,
-        manifest_job.rv(),
-        [seed_species],
-        memory="2G",
-        disk="2G",
-    )
-
-    return round_job.rv()
-
-
 def main():
     parser = Job.Runner.getDefaultArgumentParser()
 
