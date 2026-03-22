@@ -30,7 +30,7 @@ def _run(cmd: list[str]) -> None:
 
 def ensure_fasta_index(fasta_path: str) -> None:
     fasta = Path(fasta_path)
-    fai = fasta.with_suffix(fasta.suffix + ".fai")
+    fai = Path(str(fasta) + ".fai")
     if fai.exists():
         return
     _run(["samtools", "faidx", str(fasta)])
@@ -159,3 +159,29 @@ def load_all_species_sequences(
         species_list=species_list,
         hal_path=hal_path,
     )
+
+
+def prepare_diamond_inputs(
+    workdir: str,
+    annotation_dir: str,
+    annotation_suffix: str,
+    species_list: list[str],
+    hal_path: str,
+) -> dict[str, str]:
+    """
+    Return only protein FASTA paths for annotated species.
+    Unannotated species are skipped.
+    """
+    seqs = load_all_species_sequences(
+        workdir=workdir,
+        annotation_dir=annotation_dir,
+        annotation_suffix=annotation_suffix,
+        species_list=species_list,
+        hal_path=hal_path,
+    )
+
+    return {
+        species: paths["aa_fa"]
+        for species, paths in seqs.items()
+        if paths.get("aa_fa") is not None
+    }
