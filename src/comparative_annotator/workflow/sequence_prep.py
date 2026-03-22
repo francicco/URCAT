@@ -39,9 +39,9 @@ def ensure_fasta_index(fasta_path: str) -> None:
 def export_species_genome_from_hal(
     hal_path: str,
     species: str,
-    out_fa: str,
+    out_fasta: str,
 ) -> str:
-    out = Path(out_fa)
+    out = Path(out_fasta)
     _safe_mkdir(out.parent)
 
     if out.exists() and out.stat().st_size > 0:
@@ -58,6 +58,7 @@ def export_species_genome_from_hal(
     )
 
     return str(out)
+
 
 def run_gffread(
     gff_path: str,
