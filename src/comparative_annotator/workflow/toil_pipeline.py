@@ -843,18 +843,6 @@ def run_round_zero(job, workdir, cfg: URCATConfig):
 
     return round_job.rv()
 
-
-from __future__ import annotations
-
-from pathlib import Path
-
-from toil.common import Toil
-from toil.job import Job
-
-from comparative_annotator.workflow.config import URCATConfig, load_urcat_config
-from comparative_annotator.workflow.final_gff3 import write_final_species_gff3s
-
-
 def run_round_zero(job, workdir: str, cfg: URCATConfig):
     # Your existing round-zero scheduling code goes here.
     # Important part: use cfg.species_list, cfg.annotation_paths, cfg.seed_species, cfg.batch_size
