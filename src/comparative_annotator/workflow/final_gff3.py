@@ -37,17 +37,35 @@ def write_final_species_gff3s(
     annotation_paths: dict[str, str],
     species_list: list[str],
 ) -> None:
-    species_list = [x.strip() for x in species_csv.split(",") if x.strip()]
-    workdir = Path(workdir)
-    out_dir = workdir / "final_gff3"
+    """
+    Merge original annotations with any URCAT new_loci GFF3s found under
+    output_dir and write one final GFF3 per species.
+
+    Parameters
+    ----------
+    output_dir:
+        Root output directory (same one passed to the pipeline).
+    annotation_paths:
+        Mapping of species -> original GFF3 path.
+    species_list:
+        List of all species to process.
+    """
+    out_dir = Path(output_dir) / "final_gff3"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for species in species_list:
-        original_path = Path(annotation_dir) / f"{species}{annotation_suffix}"
-        species_new_files = sorted(workdir.rglob(f"{species}.new_loci.gff3"))
+        original_path_str = annotation_paths.get(species, "")
+        original_path = Path(original_path_str) if original_path_str else None
 
-        original_lines = _read_noncomment_lines(original_path) if original_path.exists() else []
-        new_lines = []
+        # Collect any new-loci GFF3s produced during the pipeline run
+        species_new_files = sorted(Path(output_dir).rglob(f"{species}.new_loci.gff3"))
+
+        original_lines = (
+            _read_noncomment_lines(original_path)
+            if original_path is not None and original_path.exists()
+            else []
+        )
+        new_lines: list[str] = []
         for p in species_new_files:
             new_lines.extend(_read_noncomment_lines(p))
 
