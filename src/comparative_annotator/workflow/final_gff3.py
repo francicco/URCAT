@@ -33,10 +33,9 @@ def _feature_sort_key(line: str):
 
 
 def write_final_species_gff3s(
-    workdir: str,
-    annotation_dir: str,
-    annotation_suffix: str,
-    species_csv: str,
+    output_dir: str,
+    annotation_paths: dict[str, str],
+    species_list: list[str],
 ) -> None:
     species_list = [x.strip() for x in species_csv.split(",") if x.strip()]
     workdir = Path(workdir)
