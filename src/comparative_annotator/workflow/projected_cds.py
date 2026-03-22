@@ -230,14 +230,15 @@ def project_intervals_with_hal(
             source_transcript=source_transcript_id,
         )
         for h in hits:
+            # h is a ProjectionInterval dataclass — use attribute access
             out.append(
                 {
                     "source_start": source_start,
                     "source_end": source_end,
-                    "target_seqid": h["seqid"],
-                    "target_start": int(h["start"]),
-                    "target_end": int(h["end"]),
-                    "target_strand": h.get("strand", source_strand),
+                    "target_seqid": h.seqid,
+                    "target_start": int(h.start),
+                    "target_end": int(h.end),
+                    "target_strand": h.strand if h.strand is not None else source_strand,
                 }
             )
     return out
