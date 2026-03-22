@@ -1226,9 +1226,18 @@ def run_round_zero(
 
 
 def main():
-    import sys
     from argparse import ArgumentParser
-    from configparser import ConfigParser
+
+    parser = ArgumentParser()
+    Job.Runner.addToilOptions(parser)
+
+    parser.add_argument("--outputDir", required=True)
+    parser.add_argument("--seedSpecies")
+    parser.add_argument("--speciesCsv")
+    parser.add_argument("--halPath")
+    parser.add_argument("--annotationDir")
+    parser.add_argument("--annotationSuffix")
+    parser.add_argument("--batchSize", type=int)
 
     args = parser.parse_args()
     args = apply_config_overrides(args)
@@ -1243,59 +1252,12 @@ def main():
             "the following arguments are required (via CLI or --config): "
             + ", ".join(missing)
         )
-    
-    parser = ArgumentParser()
-    Job.Runner.addToilOptions(parser)
 
-    parser.add_argument("--outputDir", required=True)
-    parser.add_argument("--seedSpecies")
-    parser.add_argument("--speciesCsv")
-    parser.add_argument("--halPath")
-    parser.add_argument("--annotationDir")
-    parser.add_argument("--annotationSuffix")
-    parser.add_argument("--batchSize", type=int)
-
-    options = parser.parse_args()
-
-    config = ConfigParser()
-    if getattr(options, "config", None):
-        config.read(options.config)
-
-    def cfg_get(*keys, default=None):
-        for section in ("input", "DEFAULT"):
-            if section == "DEFAULT":
-                source = config.defaults()
-            elif config.has_section(section):
-                source = config[section]
-            else:
-                source = {}
-            for key in keys:
-                if key in source and str(source[key]).strip() != "":
-                    return str(source[key]).strip()
-        return default
-
-    output_dir = str(Path(options.outputDir).resolve())
-    seed_species = options.seedSpecies or cfg_get("seedSpecies", "seed_species")
-    species_csv = options.speciesCsv or cfg_get("speciesCsv", "species", "species_list")
-    hal_path_value = options.halPath or cfg_get("halPath", "hal", "hal_path")
-    annotation_dir_value = options.annotationDir or cfg_get("annotationDir", "annotation_dir")
-    annotation_suffix = options.annotationSuffix or cfg_get("annotationSuffix", "annotation_suffix", default=".test.gff3")
-    batch_size = options.batchSize if options.batchSize is not None else int(cfg_get("batchSize", "batch_size", default="200"))
-
-    missing = []
-    if not seed_species:
-        missing.append("seedSpecies")
-    if not species_csv:
-        missing.append("speciesCsv")
-    if not hal_path_value:
-        missing.append("halPath")
-    if not annotation_dir_value:
-        missing.append("annotationDir")
-    if missing:
-        parser.error("the following arguments are required (via CLI or --config): " + ", ".join(f"--{x}" for x in missing))
-
-    annotation_dir = str(Path(annotation_dir_value).resolve())
-    hal_path = str(Path(hal_path_value).resolve())
+    output_dir = str(Path(args.outputDir).resolve())
+    annotation_dir = str(Path(args.annotationDir).resolve())
+    hal_path = str(Path(args.halPath).resolve())
+    annotation_suffix = args.annotationSuffix or ".test.gff3"
+    batch_size = args.batchSize if args.batchSize is not None else 200
 
     root = Job.wrapJobFn(
         run_round_zero,
@@ -1303,21 +1265,21 @@ def main():
         annotation_dir,
         annotation_suffix,
         hal_path,
-        species_csv,
-        seed_species,
+        args.speciesCsv,
+        args.seedSpecies,
         batch_size,
         memory="2G",
         disk="2G",
     )
 
-    with Toil(options) as toil:
+    with Toil(args) as toil:
         toil.start(root)
 
     write_final_species_gff3s(
         output_dir,
         annotation_dir,
         annotation_suffix,
-        species_csv,
+        args.speciesCsv,
     )
 
 if __name__ == "__main__":
