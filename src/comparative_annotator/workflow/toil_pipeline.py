@@ -1231,9 +1231,6 @@ def main():
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
-    # DO NOT add --config again if it already exists
-    # parser.add_argument("--config", required=True)
-
     parser.add_argument("--outputDir", required=True)
     parser.add_argument("--seedSpecies", default=None)
     parser.add_argument("--speciesCsv", default=None)
@@ -1244,10 +1241,10 @@ def main():
 
     args = parser.parse_args()
 
+    from comparative_annotator.workflow.config import load_urcat_config
+
     if not getattr(args, "config", None):
         parser.error("--config is required")
-
-    from comparative_annotator.workflow.config import load_urcat_config
 
     cfg = load_urcat_config(args.config)
 
@@ -1258,6 +1255,22 @@ def main():
     annotation_dir = args.annotationDir or cfg.annotation_dir
     annotation_suffix = args.annotationSuffix or cfg.annotation_suffix
     batch_size = args.batchSize if args.batchSize is not None else cfg.batch_size
+
+    missing = []
+    if not seed_species:
+        missing.append("--seedSpecies")
+    if not species_csv:
+        missing.append("--speciesCsv")
+    if not hal_path:
+        missing.append("--halPath")
+    if not annotation_dir:
+        missing.append("--annotationDir")
+
+    if missing:
+        parser.error(
+            "the following arguments are required (via CLI or --config): "
+            + ", ".join(missing)
+        )
 
     root = Job.wrapJobFn(
         run_round_zero,
