@@ -658,7 +658,6 @@ def annotate_missing_loci_and_choose_next(
 ):
     from pathlib import Path
 
-    from comparative_annotator.io.json_utils import read_json, write_json
     from comparative_annotator.projection.hal_adapter import HALAdapter
     from comparative_annotator.workflow.fragmented_models import ProjectedBlock
     from comparative_annotator.workflow.fragmented_projection import summarize_projected_blocks
