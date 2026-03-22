@@ -1227,25 +1227,66 @@ def run_round_zero(
 
 def main():
     from argparse import ArgumentParser
+    from configparser import ConfigParser
 
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
     parser.add_argument("--outputDir", required=True)
-    parser.add_argument("--seedSpecies")
-    parser.add_argument("--speciesCsv")
-    parser.add_argument("--halPath")
-    parser.add_argument("--annotationDir")
-    parser.add_argument("--annotationSuffix")
-    parser.add_argument("--batchSize", type=int)
+    parser.add_argument("--seedSpecies", default=None)
+    parser.add_argument("--speciesCsv", default=None)
+    parser.add_argument("--halPath", default=None)
+    parser.add_argument("--annotationDir", default=None)
+    parser.add_argument("--annotationSuffix", default=None)
+    parser.add_argument("--batchSize", type=int, default=None)
 
-    args = parser.parse_args()
-    args = apply_config_overrides(args)
+    options = parser.parse_args()
+
+    config = ConfigParser()
+    config_path = getattr(options, "config", None)
+    if config_path:
+        read_files = config.read(config_path)
+        if not read_files:
+            parser.error(f"Could not read config file: {config_path}")
+
+    def cfg_get(*keys, default=None):
+        for section in ("input", "DEFAULT"):
+            if section == "DEFAULT":
+                source = dict(config.defaults())
+            elif config.has_section(section):
+                source = dict(config.items(section))
+            else:
+                source = {}
+
+            source = {str(k).strip().lower(): str(v).strip() for k, v in source.items()}
+
+            for key in keys:
+                k = str(key).strip().lower()
+                if k in source and source[k] != "":
+                    return source[k]
+
+        return default
+
+    seed_species = options.seedSpecies or cfg_get("seedSpecies", "seed_species")
+    species_csv = options.speciesCsv or cfg_get("speciesCsv", "species", "species_list")
+    hal_path_value = options.halPath or cfg_get("halPath", "hal", "hal_path")
+    annotation_dir_value = options.annotationDir or cfg_get("annotationDir", "annotation_dir")
+    annotation_suffix = options.annotationSuffix or cfg_get(
+        "annotationSuffix", "annotation_suffix", default=".test.gff3"
+    )
+    batch_size = options.batchSize if options.batchSize is not None else int(
+        cfg_get("batchSize", "batch_size", default="200")
+    )
 
     missing = []
-    for name in ["seedSpecies", "speciesCsv", "halPath", "annotationDir"]:
-        if getattr(args, name, None) in (None, ""):
-            missing.append(f"--{name}")
+    if not seed_species:
+        missing.append("--seedSpecies")
+    if not species_csv:
+        missing.append("--speciesCsv")
+    if not hal_path_value:
+        missing.append("--halPath")
+    if not annotation_dir_value:
+        missing.append("--annotationDir")
 
     if missing:
         parser.error(
@@ -1253,11 +1294,9 @@ def main():
             + ", ".join(missing)
         )
 
-    output_dir = str(Path(args.outputDir).resolve())
-    annotation_dir = str(Path(args.annotationDir).resolve())
-    hal_path = str(Path(args.halPath).resolve())
-    annotation_suffix = args.annotationSuffix or ".test.gff3"
-    batch_size = args.batchSize if args.batchSize is not None else 200
+    output_dir = str(Path(options.outputDir).resolve())
+    hal_path = str(Path(hal_path_value).resolve())
+    annotation_dir = str(Path(annotation_dir_value).resolve())
 
     root = Job.wrapJobFn(
         run_round_zero,
@@ -1265,21 +1304,21 @@ def main():
         annotation_dir,
         annotation_suffix,
         hal_path,
-        args.speciesCsv,
-        args.seedSpecies,
+        species_csv,
+        seed_species,
         batch_size,
         memory="2G",
         disk="2G",
     )
 
-    with Toil(args) as toil:
+    with Toil(options) as toil:
         toil.start(root)
 
     write_final_species_gff3s(
         output_dir,
         annotation_dir,
         annotation_suffix,
-        args.speciesCsv,
+        species_csv,
     )
 
 if __name__ == "__main__":
