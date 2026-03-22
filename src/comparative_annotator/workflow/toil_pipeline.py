@@ -843,10 +843,43 @@ def run_round_zero(job, workdir, cfg: URCATConfig):
 
     return round_job.rv()
 
-def run_round_zero(job, workdir: str, cfg: URCATConfig):
-    # Your existing round-zero scheduling code goes here.
-    # Important part: use cfg.species_list, cfg.annotation_paths, cfg.seed_species, cfg.batch_size
-    return None
+
+def run_round_zero(job, workdir, cfg: URCATConfig):
+    seed_species = cfg.seed_species
+    targets = [sp for sp in cfg.species_list if sp != seed_species]
+
+    frontier_job = job.addChildJobFn(
+        write_seed_frontier,
+        workdir,
+        cfg.annotation_paths,
+        seed_species,
+        memory="2G",
+        disk="2G",
+    )
+
+    manifest_job = frontier_job.addFollowOnJobFn(
+        write_manifest,
+        workdir,
+        frontier_job.rv(),
+        seed_species,
+        targets,
+        cfg.batch_size,
+        memory="2G",
+        disk="2G",
+    )
+
+    round_job = manifest_job.addFollowOnJobFn(
+        schedule_round_from_manifest,
+        workdir,
+        cfg,
+        seed_species,
+        manifest_job.rv(),
+        [seed_species],
+        memory="2G",
+        disk="2G",
+    )
+
+    return round_job.rv()
 
 
 def main():
@@ -856,18 +889,21 @@ def main():
     parser.add_argument("--urcatConfig", required=True, help="Path to URCAT INI config")
     parser.add_argument("--outputDir", required=True, help="Workflow output directory")
 
-    cfg = load_urcat_config(args.config)
     args = parser.parse_args()
+
+    cfg = load_urcat_config(args.urcatConfig)
     output_dir = str(Path(args.outputDir).resolve())
-    
+
+    print(cfg)
+
     resolved_cfg = URCATConfig(
-        seed_species=cfg.seed_species,
+        seed_species=cfg.species_list,
         hal_path=cfg.hal_path,
         batch_size=cfg.batch_size,
         species_list=cfg.species_list,
         annotation_paths=cfg.annotation_paths,
     )
-    
+
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
