@@ -131,23 +131,34 @@ def append_unique_preserve_order(items, value):
 
 
 def load_transcripts_for_species(
-    annotation_dir: str,
-    annotation_suffix: str,
+    annotation_dir: str | None,
+    annotation_suffix: str | None,
     species: str,
+    annotation_paths: dict[str, str] | None = None,
 ) -> dict[str, CandidateTranscript]:
-    gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix}").resolve()
-    if not gff_path.exists():
+    if annotation_paths is not None:
+        gff_path_str = annotation_paths.get(species, "")
+        gff_path = Path(gff_path_str) if gff_path_str else None
+    elif annotation_dir is not None:
+        gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix or ''}").resolve()
+    else:
+        return {}
+    if gff_path is None or not gff_path.exists():
         return {}
     return load_gff3(str(gff_path), species=species)
 
 
 def load_all_transcripts(
-    annotation_dir: str,
-    annotation_suffix: str,
+    annotation_dir: str | None,
+    annotation_suffix: str | None,
     species_list: list[str],
+    annotation_paths: dict[str, str] | None = None,
 ) -> dict[str, dict[str, CandidateTranscript]]:
     return {
-        sp: load_transcripts_for_species(annotation_dir, annotation_suffix, sp)
+        sp: load_transcripts_for_species(
+            annotation_dir, annotation_suffix, sp,
+            annotation_paths=annotation_paths,
+        )
         for sp in species_list
     }
 
@@ -403,8 +414,11 @@ def write_round_summary(job, workdir, round_merged_path, decision_path):
     return str(json_paths[0])
 
 
-def write_seed_frontier(job, workdir, annotation_dir, annotation_suffix, seed_species):
-    tx = load_transcripts_for_species(annotation_dir, annotation_suffix, seed_species)
+def write_seed_frontier(job, workdir, annotation_paths, seed_species):
+    """annotation_paths is a dict mapping species -> GFF3 path."""
+    gff_path = annotation_paths.get(seed_species, "")
+    from comparative_annotator.io.gff3 import load_gff3
+    tx = load_gff3(gff_path, species=seed_species) if gff_path else {}
     out = {
         "round_id": 0,
         "reference_species": seed_species,
@@ -1184,9 +1198,16 @@ def run_round_zero(
     workdir,
     cfg,
 ):
+    """
+    Entry point for round 0. cfg is a URCATConfig instance.
+    write_seed_frontier and schedule_round_from_manifest accept individual
+    string arguments, so we unpack cfg here.
+    """
     seed_species = cfg.seed_species
     targets = [sp for sp in cfg.species_list if sp != seed_species]
+    species_csv = ",".join(cfg.species_list)
 
+    # write_seed_frontier needs annotation_paths as a dict (species -> path)
     frontier_job = job.addChildJobFn(
         write_seed_frontier,
         workdir,
@@ -1207,14 +1228,14 @@ def run_round_zero(
         disk="2G",
     )
 
+    # schedule_round_from_manifest takes individual string params
     round_job = manifest_job.addFollowOnJobFn(
-        schedule_round_from_manifest,
+        schedule_round_from_manifest_from_cfg,
         workdir,
         cfg,
         seed_species,
         manifest_job.rv(),
         [seed_species],
-        cfg.batch_size,
         memory="2G",
         disk="2G",
     )
@@ -1222,15 +1243,44 @@ def run_round_zero(
     return round_job.rv()
 
 
+def schedule_round_from_manifest_from_cfg(
+    job,
+    workdir,
+    cfg,
+    reference_species,
+    manifest_path,
+    used_reference_species,
+):
+    """
+    Adapter: unpacks URCATConfig into the individual string arguments that
+    schedule_round_from_manifest expects.
+    """
+    return schedule_round_from_manifest(
+        job,
+        workdir,
+        annotation_dir=None,
+        annotation_suffix=None,
+        hal_path=cfg.hal_path,
+        species_csv=",".join(cfg.species_list),
+        reference_species=reference_species,
+        manifest_path=manifest_path,
+        used_reference_species=used_reference_species,
+        batch_size=cfg.batch_size,
+    )
+
+
 def main():
-    import sys
     from argparse import ArgumentParser
     from pathlib import Path
+    from toil.common import Toil
+    from toil.job import Job
 
     parser = ArgumentParser()
     Job.Runner.addToilOptions(parser)
 
     parser.add_argument("--outputDir", required=True)
+    parser.add_argument("--config", default=None, metavar="PATH",
+                        help="INI config file (required)")
     parser.add_argument("--seedSpecies", default=None)
     parser.add_argument("--speciesCsv", default=None)
     parser.add_argument("--halPath", default=None)
@@ -1240,35 +1290,28 @@ def main():
 
     args = parser.parse_args()
 
-    config_path = None
-    argv = sys.argv[1:]
-    for i, token in enumerate(argv):
-        if token == "--config" and i + 1 < len(argv):
-            config_path = argv[i + 1]
-            break
-        if token.startswith("--config="):
-            config_path = token.split("=", 1)[1]
-            break
+    from comparative_annotator.workflow.config import load_urcat_config, URCATConfig
 
-    if config_path is None:
+    if not args.config:
         parser.error("--config is required")
 
-    from comparative_annotator.workflow.config import load_urcat_config
-    cfg = load_urcat_config(config_path)
+    cfg = load_urcat_config(args.config)
 
     output_dir = str(Path(args.outputDir).resolve())
-
     seed_species = args.seedSpecies or cfg.seed_species
-    species_csv = args.speciesCsv or ",".join(cfg.species)
-    hal_path = str(Path(args.halPath or cfg.hal_path).resolve())
-
-    annotation_dir_value = args.annotationDir or cfg.annotation_dir
-    if annotation_dir_value is None:
-        parser.error("--annotationDir is required unless your downstream code has been fully migrated to per-species annotation paths")
-    annotation_dir = str(Path(annotation_dir_value).resolve())
-
-    annotation_suffix = args.annotationSuffix or cfg.annotation_suffix or ".test.gff3"
+    species_csv = args.speciesCsv or ",".join(cfg.species_list)
+    hal_path = args.halPath or cfg.hal_path
     batch_size = args.batchSize if args.batchSize is not None else cfg.batch_size
+
+    # annotation_paths: CLI --annotationDir/Suffix override or fall back to cfg
+    if args.annotationDir:
+        suffix = args.annotationSuffix or ""
+        annotation_paths = {
+            sp: f"{args.annotationDir}/{sp}{suffix}"
+            for sp in cfg.species_list
+        }
+    else:
+        annotation_paths = cfg.annotation_paths
 
     missing = []
     if not seed_species:
@@ -1277,8 +1320,6 @@ def main():
         missing.append("--speciesCsv")
     if not hal_path:
         missing.append("--halPath")
-    if not annotation_dir:
-        missing.append("--annotationDir")
 
     if missing:
         parser.error(
@@ -1286,15 +1327,19 @@ def main():
             + ", ".join(missing)
         )
 
+    # Build a resolved config object for the pipeline
+    resolved_cfg = URCATConfig(
+        seed_species=seed_species,
+        hal_path=hal_path,
+        batch_size=batch_size,
+        species_list=cfg.species_list,
+        annotation_paths=annotation_paths,
+    )
+
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
-        annotation_dir,
-        annotation_suffix,
-        hal_path,
-        species_csv,
-        seed_species,
-        batch_size,
+        resolved_cfg,
         memory="2G",
         disk="2G",
     )
@@ -1303,10 +1348,9 @@ def main():
         toil.start(root)
 
     write_final_species_gff3s(
-        output_dir,
-        annotation_dir,
-        annotation_suffix,
-        species_csv,
+        output_dir=output_dir,
+        annotation_paths=resolved_cfg.annotation_paths,
+        species_list=resolved_cfg.species_list,
     )
 
 if __name__ == "__main__":
