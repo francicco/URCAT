@@ -844,17 +844,33 @@ def run_round_zero(job, workdir, cfg: URCATConfig):
     return round_job.rv()
 
 
+from __future__ import annotations
+
+from pathlib import Path
+
+from toil.common import Toil
+from toil.job import Job
+
+from comparative_annotator.workflow.config import URCATConfig, load_urcat_config
+from comparative_annotator.workflow.final_gff3 import write_final_species_gff3s
+
+
+def run_round_zero(job, workdir: str, cfg: URCATConfig):
+    # Your existing round-zero scheduling code goes here.
+    # Important part: use cfg.species_list, cfg.annotation_paths, cfg.seed_species, cfg.batch_size
+    return None
+
+
 def main():
     parser = Job.Runner.getDefaultArgumentParser()
-    parser.add_argument("--outputDir", required=True)
+
+    # URCAT-specific arguments only.
+    parser.add_argument("--urcatConfig", required=True, help="Path to URCAT INI config")
+    parser.add_argument("--outputDir", required=True, help="Workflow output directory")
 
     args = parser.parse_args()
 
-    config_path = getattr(args, "config", None)
-    if not config_path:
-        parser.error("--config is required")
-
-    cfg = load_urcat_config(config_path)
+    cfg = load_urcat_config(args.urcatConfig)
     output_dir = str(Path(args.outputDir).resolve())
 
     root = Job.wrapJobFn(
@@ -873,6 +889,10 @@ def main():
         annotation_paths=cfg.annotation_paths,
         species_list=cfg.species_list,
     )
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
