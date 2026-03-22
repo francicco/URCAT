@@ -165,6 +165,23 @@ def load_all_species_sequences(
         hal_path=hal_path,
     )
 
+def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
+    in_path = Path(in_fa)
+    out_path = Path(out_fa) if out_fa is not None else in_path
+
+    tmp_path = out_path.with_suffix(out_path.suffix + ".sanitize.tmp")
+
+    with open(in_path) as fin, open(tmp_path, "w") as fout:
+        for line in fin:
+            if line.startswith(">"):
+                fout.write(line)
+            else:
+                seq = line.strip().upper()
+                seq = seq.replace(".", "X")
+                fout.write(seq + "\n")
+
+    tmp_path.replace(out_path)
+    return str(out_path)
 
 def prepare_diamond_inputs(
     workdir: str,
