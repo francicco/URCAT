@@ -25,20 +25,14 @@ from comparative_annotator.workflow.progressive import (
     locus_overlaps_any_interval,
     pick_next_reference_from_order,
 )
-
 from comparative_annotator.workflow.orthology_edges import build_target_edge_evidence
-
-from comparative_annotator.workflow.projection_table import write_projection_evidence_table
-from comparative_annotator.workflow.novel_annotation_table import write_novel_annotations_table
-from comparative_annotator.workflow.round_metrics import write_round_metrics_table
 from comparative_annotator.workflow.workflow_paths import get_round_dir
-
 from comparative_annotator.workflow.analysis_tables import (
     write_all_analysis_tables_for_round,
     write_all_analysis_tables_for_target,
 )
-
 from comparative_annotator.workflow.final_gff3 import write_final_species_gff3s
+
 
 @dataclass
 class FrontierSeedTranscript:
@@ -84,10 +78,8 @@ def load_transcripts_for_species(
     species: str,
 ) -> dict[str, CandidateTranscript]:
     gff_path = (Path(annotation_dir) / f"{species}{annotation_suffix}").resolve()
-
     if not gff_path.exists():
         return {}
-
     return load_gff3(str(gff_path), species=species)
 
 
@@ -174,7 +166,7 @@ def collect_projected_transcript_spans_for_species(
         if source_species == target_species:
             continue
 
-        for _, seed in transcripts_by_species[source_species].items():
+        for _, seed in transcripts_by_species.get(source_species, {}).items():
             projected_exon_blocks = []
 
             for exon_start, exon_end in seed.exons:
@@ -278,6 +270,7 @@ def finalize_round_outputs(output_dir: str, round_id: int) -> None:
     round_dir = get_round_dir(output_dir, round_id)
     write_all_analysis_tables_for_round(round_dir)
 
+
 def write_round_summary(job, workdir, round_merged_path, decision_path):
     round_merged = read_json(round_merged_path)
     decision = read_json(decision_path)
@@ -326,7 +319,7 @@ def write_round_summary(job, workdir, round_merged_path, decision_path):
             fh.write("\t".join(header) + "\n")
             for target_species, stats in summary["targets"].items():
                 fh.write(
-                    "	".join(
+                    "\t".join(
                         [
                             str(summary["round_id"]),
                             str(summary["seed_species"]),
@@ -586,6 +579,7 @@ def merge_target_results(job, workdir, round_id, reference_species, target_speci
     write_json(out_path, merged)
     return str(out_path)
 
+
 def run_target_edge_evidence(
     job,
     workdir: str,
@@ -656,8 +650,6 @@ def annotate_missing_loci_and_choose_next(
     round_merged_path,
     used_reference_species,
 ):
-    from pathlib import Path
-
     from comparative_annotator.workflow.new_loci_gff3 import write_new_loci_gff3
     from comparative_annotator.workflow.fragmented_loci_table import write_fragmented_loci_table
     from comparative_annotator.workflow.fragmented_projection import summarize_projected_blocks
@@ -673,6 +665,7 @@ def annotate_missing_loci_and_choose_next(
 
     new_consensus_by_species = {}
     fragmented_by_species = {}
+    skipped_missing_payloads = []
 
     for target_species, payloads in missing_by_target.items():
         projected_transcripts = []
@@ -683,12 +676,20 @@ def annotate_missing_loci_and_choose_next(
             source_tx_id = payload["source_transcript"]
 
             if source_tx_id not in transcripts_by_species.get(source_species, {}):
+                skipped_missing_payloads.append(
+                    {
+                        "target_species": target_species,
+                        "source_species": source_species,
+                        "source_transcript": source_tx_id,
+                        "reason": "source_transcript_not_found",
+                    }
+                )
                 continue
 
             seed = transcripts_by_species[source_species][source_tx_id]
             projected_exon_blocks = []
 
-            for exon_start, exon_end in seed.exons:
+            for exon_idx, (exon_start, exon_end) in enumerate(seed.exons, start=1):
                 intervals = hal.project_interval(
                     source_species=seed.species,
                     target_species=target_species,
@@ -700,10 +701,6 @@ def annotate_missing_loci_and_choose_next(
                 )
                 projected_exon_blocks.append(intervals)
 
-            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
-            projected_transcripts.extend(pts)
-
-            for exon_idx, intervals in enumerate(projected_exon_blocks, start=1):
                 for iv in intervals:
                     projected_blocks_for_summary.append(
                         {
@@ -721,6 +718,9 @@ def annotate_missing_loci_and_choose_next(
                         }
                     )
 
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            projected_transcripts.extend(pts)
+
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
             consensuses = []
@@ -733,8 +733,7 @@ def annotate_missing_loci_and_choose_next(
             if consensuses:
                 new_consensus_by_species[target_species] = consensuses
 
-        fragmented_summary = summarize_projected_blocks(projected_blocks_for_summary)
-        fragmented_by_species[target_species] = fragmented_summary
+        fragmented_by_species[target_species] = summarize_projected_blocks(projected_blocks_for_summary)
 
     updated_used = append_unique_preserve_order(used_reference_species, current_reference)
 
@@ -852,6 +851,7 @@ def annotate_missing_loci_and_choose_next(
         "orphan_loci_by_species": orphan_loci_by_species,
         "pending_frontiers_by_species": pending_frontiers_by_species,
         "pending_seeds_by_species": pending_frontiers_by_species,
+        "skipped_missing_payloads": skipped_missing_payloads,
         "next_reference_species": next_reference,
         "stop": next_reference is None,
     }
@@ -932,7 +932,7 @@ def schedule_target_batches(
         disk="2G",
     )
 
-    edge_job = merge_job.addFollowOnJobFn(
+    merge_job.addFollowOnJobFn(
         run_target_edge_evidence,
         workdir,
         annotation_dir,
@@ -1161,7 +1161,6 @@ def main():
     output_dir = str(Path(options.outputDir).resolve())
     annotation_dir = str(Path(options.annotationDir).resolve())
     hal_path = str(Path(options.halPath).resolve())
-    species_list = [x.strip() for x in options.speciesCsv.split(",") if x.strip()]
 
     root = Job.wrapJobFn(
         run_round_zero,
@@ -1186,6 +1185,7 @@ def main():
             annotation_suffix=options.annotationSuffix,
             species_list=species_list,
         )
+
 
 if __name__ == "__main__":
     main()
