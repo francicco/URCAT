@@ -483,8 +483,13 @@ def merge_round_results(job, workdir, round_id, reference_species, merged_target
 
 
 def annotate_missing_loci_and_choose_next(
-    job, workdir, cfg: URCATConfig, round_id,
-    current_reference, round_merged_path, used_reference_species,
+    job,
+    workdir,
+    cfg: URCATConfig,
+    round_id,
+    current_reference,
+    round_merged_path,
+    used_reference_species,
 ):
     from comparative_annotator.workflow.new_loci_gff3 import write_new_loci_gff3
     from comparative_annotator.workflow.fragmented_loci_table import write_fragmented_loci_table
@@ -505,6 +510,7 @@ def annotate_missing_loci_and_choose_next(
     skipped_missing_payloads = []
 
     for target_species, payloads in missing_by_target.items():
+        fragmented_candidates_by_species.setdefault(target_species, [])
         projected_transcripts = []
         projected_blocks_for_summary = []
 
@@ -513,16 +519,19 @@ def annotate_missing_loci_and_choose_next(
             source_tx_id = payload["source_transcript"]
 
             if source_tx_id not in transcripts_by_species.get(source_species, {}):
-                skipped_missing_payloads.append({
-                    "target_species": target_species,
-                    "source_species": source_species,
-                    "source_transcript": source_tx_id,
-                    "reason": "source_transcript_not_found",
-                })
+                skipped_missing_payloads.append(
+                    {
+                        "target_species": target_species,
+                        "source_species": source_species,
+                        "source_transcript": source_tx_id,
+                        "reason": "source_transcript_not_found",
+                    }
+                )
                 continue
 
             seed = transcripts_by_species[source_species][source_tx_id]
             projected_exon_blocks = []
+            projected_block_rows = []
 
             for exon_idx, (exon_start, exon_end) in enumerate(seed.exons, start=1):
                 intervals = hal.project_interval(
@@ -537,7 +546,7 @@ def annotate_missing_loci_and_choose_next(
                 projected_exon_blocks.append(intervals)
 
                 for iv in intervals:
-                    projected_blocks_for_summary.append({
+                    row = {
                         "source_species": seed.species,
                         "source_transcript": seed.transcript_id,
                         "target_species": target_species,
@@ -550,16 +559,11 @@ def annotate_missing_loci_and_choose_next(
                         "target_strand": iv.strand,
                         "chain_score": getattr(iv, "chain_score", None),
                         "n_source_exons": len(seed.exons),
-                    })
-
-            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
-
-            projected_block_rows = []
-            for exon_idx2, exon_intervals in enumerate(projected_exon_blocks, start=1):
-                for iv in exon_intervals:
+                    }
+                    projected_blocks_for_summary.append(row)
                     projected_block_rows.append(
                         {
-                            "source_exon_number": exon_idx2,
+                            "source_exon_number": exon_idx,
                             "target_seqid": iv.seqid,
                             "target_start": iv.start,
                             "target_end": iv.end,
@@ -567,6 +571,8 @@ def annotate_missing_loci_and_choose_next(
                             "chain_score": getattr(iv, "chain_score", None),
                         }
                     )
+
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
 
             def exon_recovery(tx):
                 return len(tx.exons) / max(1, len(seed.exons))
@@ -585,19 +591,19 @@ def annotate_missing_loci_and_choose_next(
                     projected_blocks=projected_block_rows,
                 )
                 if candidate is not None:
-                    fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
+                    fragmented_candidates_by_species[target_species].append(candidate)
 
             projected_transcripts.extend(pts)
 
-        fragmented_candidates_by_species[target_species] = fragmented_candidates
-        
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
-            consensuses = [
-                build_consensus_missing_transcript(cluster, choose_missing_locus_strand(cluster)[0])
-                for cluster in clusters
-            ]
-            consensuses = [c for c in consensuses if c is not None]
+            consensuses = []
+            for cluster in clusters:
+                best_strand, _ = choose_missing_locus_strand(cluster)
+                consensus = build_consensus_missing_transcript(cluster, best_strand)
+                if consensus is not None:
+                    consensuses.append(consensus)
+
             if consensuses:
                 new_consensus_by_species[target_species] = consensuses
 
@@ -634,43 +640,53 @@ def annotate_missing_loci_and_choose_next(
         )
         explained_ids = explained_locus_ids_by_species.get(target_species, set())
 
-        orphan_loci_by_species[target_species] = [
-            {
-                "locus_id": locus.locus_id,
-                "species": locus.species,
-                "seqid": locus.seqid,
-                "start": locus.start,
-                "end": locus.end,
-                "strand": locus.strand,
-                "transcripts": locus.transcripts,
-            }
-            for locus in native_loci
-            if locus.locus_id not in explained_ids
-            and not locus_overlaps_any_interval(locus, projected_spans)
-        ]
+        orphan_loci = []
+        for locus in native_loci:
+            if locus.locus_id in explained_ids:
+                continue
+            if locus_overlaps_any_interval(locus, projected_spans):
+                continue
+
+            orphan_loci.append(
+                {
+                    "locus_id": locus.locus_id,
+                    "species": locus.species,
+                    "seqid": locus.seqid,
+                    "start": locus.start,
+                    "end": locus.end,
+                    "strand": locus.strand,
+                    "transcripts": locus.transcripts,
+                }
+            )
+
+        orphan_loci_by_species[target_species] = orphan_loci
 
     for sp in species_list:
         if sp in updated_used:
             continue
-        pending = [
-            {
-                "kind": "urcat_consensus",
-                "species": c.species,
-                "seqid": c.seqid,
-                "start": min(e[0] for e in c.exons),
-                "end": max(e[1] for e in c.exons),
-                "strand": c.strand,
-                "support_count": c.support_count,
-                "total_chain_score": c.total_chain_score,
-                "mean_exon_recovery": c.mean_exon_recovery,
-                "source_transcripts": c.source_transcripts,
-                "exons": c.exons,
-            }
-            for c in new_consensus_by_species.get(sp, [])
-        ] + [
-            {"kind": "orphan_native_locus", **o}
-            for o in orphan_loci_by_species.get(sp, [])
-        ]
+
+        pending = []
+
+        for c in new_consensus_by_species.get(sp, []):
+            pending.append(
+                {
+                    "kind": "urcat_consensus",
+                    "species": c.species,
+                    "seqid": c.seqid,
+                    "start": min(e[0] for e in c.exons),
+                    "end": max(e[1] for e in c.exons),
+                    "strand": c.strand,
+                    "support_count": c.support_count,
+                    "total_chain_score": c.total_chain_score,
+                    "mean_exon_recovery": c.mean_exon_recovery,
+                    "source_transcripts": c.source_transcripts,
+                    "exons": c.exons,
+                }
+            )
+
+        for o in orphan_loci_by_species.get(sp, []):
+            pending.append({"kind": "orphan_native_locus", **o})
+
         if pending:
             pending_frontiers_by_species[sp] = pending
 
@@ -696,12 +712,14 @@ def annotate_missing_loci_and_choose_next(
         "used_reference_species": updated_used,
         "fragmented_candidates_by_species": {
             sp: [x.to_row() for x in xs]
-                for sp, xs in fragmented_candidates_by_species.items()
+            for sp, xs in fragmented_candidates_by_species.items()
         },
         "new_consensus_by_species": {
             sp: [
                 {
-                    "species": c.species, "seqid": c.seqid, "strand": c.strand,
+                    "species": c.species,
+                    "seqid": c.seqid,
+                    "strand": c.strand,
                     "support_count": c.support_count,
                     "total_chain_score": c.total_chain_score,
                     "mean_exon_recovery": c.mean_exon_recovery,
@@ -722,28 +740,43 @@ def annotate_missing_loci_and_choose_next(
     }
 
     ref_out_path = (
-        Path(workdir) / "rounds" / f"round_{round_id:03d}"
-        / f"ref_{current_reference}" / "post_round_decision.json"
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{current_reference}"
+        / "post_round_decision.json"
     )
     round_out_path = (
-        Path(workdir) / "rounds" / f"round_{round_id:03d}" / "post_round_decision.json"
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / "post_round_decision.json"
     )
     write_json(ref_out_path, out)
     write_json(round_out_path, out)
 
     round_ref_dir = (
-        Path(workdir) / "rounds" / f"round_{round_id:03d}" / f"ref_{current_reference}"
+        Path(workdir)
+        / "rounds"
+        / f"round_{round_id:03d}"
+        / f"ref_{current_reference}"
     )
     round_ref_dir.mkdir(parents=True, exist_ok=True)
 
     for target_species, loci in new_consensus_by_species.items():
-        from comparative_annotator.workflow.new_loci_gff3 import write_new_loci_gff3
-        write_new_loci_gff3(str(round_ref_dir / f"{target_species}.new_loci.gff3"), target_species, loci)
+        write_new_loci_gff3(
+            str(round_ref_dir / f"{target_species}.new_loci.gff3"),
+            target_species,
+            loci,
+        )
 
     for target_species, loci in fragmented_by_species.items():
         write_fragmented_loci_table(
             str(round_ref_dir / f"{target_species}.fragmented_loci.tsv"),
-            round_id, current_reference, target_species, loci,
+            round_id,
+            current_reference,
+            target_species,
+            loci,
         )
 
     finalize_round_outputs(workdir, round_id)
