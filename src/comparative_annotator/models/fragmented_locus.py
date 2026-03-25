@@ -35,6 +35,14 @@ class FragmentedComparativeLocus:
     join_score: float = 0.0
     status: str = "fragmented"
 
+    aa_identity_mean: float | None = None
+    aa_coverage_fraction: float | None = None
+    aa_bitscore: float | None = None
+    protein_support_class: str | None = None
+
+    fragment_class: str | None = None
+    classification_reason: str | None = None
+
     def to_row(self) -> dict:
         return {
             "source_species": self.source_species,
@@ -52,5 +60,11 @@ class FragmentedComparativeLocus:
             "exon_order_consistent": self.exon_order_consistent,
             "total_chain_score": round(self.total_chain_score, 4),
             "join_score": round(self.join_score, 4),
+            "aa_identity_mean": None if self.aa_identity_mean is None else round(self.aa_identity_mean, 4),
+            "aa_coverage_fraction": None if self.aa_coverage_fraction is None else round(self.aa_coverage_fraction, 4),
+            "aa_bitscore": None if self.aa_bitscore is None else round(self.aa_bitscore, 4),
+            "protein_support_class": self.protein_support_class,
+            "fragment_class": self.fragment_class,
+            "classification_reason": self.classification_reason,
             "status": self.status,
         }
