@@ -213,3 +213,145 @@ def classify_fragmented_candidate(
         candidate.classification_reason = "mixed_or_insufficient_support"
 
     return candidate
+
+def _max_consecutive_run(values: list[int]) -> int:
+    if not values:
+        return 0
+
+    values = sorted(set(values))
+    best = 1
+    cur = 1
+
+    for i in range(1, len(values)):
+        if values[i] == values[i - 1] + 1:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 1
+
+    return best
+
+
+def _safe_fraction(num: int, den: int) -> float:
+    return num / den if den > 0 else 0.0
+
+def classify_disrupted_projection_candidate(
+    candidate: FragmentedComparativeLocus,
+) -> FragmentedComparativeLocus:
+    """
+    Classify a disrupted projection into one of:
+      - split_fragment_high_confidence
+      - split_fragment_moderate_confidence
+      - partial_ortholog_high_confidence
+      - partial_ortholog_moderate_confidence
+      - spurious_partial
+      - ambiguous_partial
+
+    Logic:
+      1. Separate multi-scaffold split cases from single-scaffold partial cases.
+      2. For single-scaffold partials, distinguish coherent partial orthologs
+         from noisy/spurious partial mappings.
+    """
+
+    recovered = sorted(set(candidate.recovered_exon_numbers))
+    n_recovered = len(recovered)
+    n_source = max(1, candidate.n_source_exons)
+
+    max_consecutive = _max_consecutive_run(recovered)
+    consecutive_fraction = _safe_fraction(max_consecutive, n_source)
+
+    # store if model has these attributes
+    if hasattr(candidate, "max_consecutive_recovered_exons"):
+        candidate.max_consecutive_recovered_exons = max_consecutive
+    if hasattr(candidate, "consecutive_exon_fraction"):
+        candidate.consecutive_exon_fraction = consecutive_fraction
+
+    pid = candidate.aa_identity_mean or 0.0
+    cov = candidate.aa_coverage_fraction if candidate.aa_coverage_fraction is not None else 0.0
+    n_seqids = len(candidate.target_seqids)
+
+    strong_protein = pid >= 0.80 and cov >= 0.25
+    moderate_protein = pid >= 0.65 and cov >= 0.15
+    weak_protein = pid >= 0.50
+    poor_protein = pid < 0.50 and cov < 0.15
+
+    strong_structure = (
+        candidate.exon_recovery_fraction >= 0.40
+        and n_recovered >= 2
+        and candidate.strand_consistent
+        and candidate.exon_order_consistent
+    )
+
+    coherent_partial_structure = (
+        candidate.exon_recovery_fraction >= 0.20
+        and n_recovered >= 2
+        and candidate.strand_consistent
+        and candidate.exon_order_consistent
+        and max_consecutive >= 2
+    )
+
+    very_weak_structure = (
+        n_recovered <= 1
+        or not candidate.strand_consistent
+        or not candidate.exon_order_consistent
+    )
+
+    # ------------------------------------------------------------------
+    # A. Multi-scaffold split cases
+    # ------------------------------------------------------------------
+    if n_seqids >= 2:
+        if strong_structure and strong_protein:
+            candidate.fragment_class = "split_fragment_high_confidence"
+            candidate.classification_reason = "multi_scaffold_coherent_with_strong_protein_support"
+            return candidate
+
+        if coherent_partial_structure and moderate_protein:
+            candidate.fragment_class = "split_fragment_moderate_confidence"
+            candidate.classification_reason = "multi_scaffold_coherent_with_moderate_protein_support"
+            return candidate
+
+        if poor_protein and very_weak_structure:
+            candidate.fragment_class = "spurious_partial"
+            candidate.classification_reason = "multi_scaffold_but_weak_structure_and_protein_support"
+            return candidate
+
+        candidate.fragment_class = "ambiguous_partial"
+        candidate.classification_reason = "multi_scaffold_mixed_support"
+        return candidate
+
+    # ------------------------------------------------------------------
+    # B. Single-scaffold partial cases
+    # ------------------------------------------------------------------
+    # Here the question is:
+    # is this a real truncated/incomplete ortholog or just a spurious patch?
+    if n_seqids == 1:
+        if coherent_partial_structure and strong_protein and consecutive_fraction >= 0.15:
+            candidate.fragment_class = "partial_ortholog_high_confidence"
+            candidate.classification_reason = "single_scaffold_coherent_partial_with_strong_protein_support"
+            return candidate
+
+        if coherent_partial_structure and moderate_protein and max_consecutive >= 2:
+            candidate.fragment_class = "partial_ortholog_moderate_confidence"
+            candidate.classification_reason = "single_scaffold_coherent_partial_with_moderate_protein_support"
+            return candidate
+
+        if poor_protein and (very_weak_structure or consecutive_fraction < 0.10):
+            candidate.fragment_class = "spurious_partial"
+            candidate.classification_reason = "single_scaffold_partial_with_weak_structure_and_protein_support"
+            return candidate
+
+        if weak_protein and coherent_partial_structure:
+            candidate.fragment_class = "ambiguous_partial"
+            candidate.classification_reason = "single_scaffold_partial_structure_present_but_protein_support_weak"
+            return candidate
+
+        candidate.fragment_class = "ambiguous_partial"
+        candidate.classification_reason = "single_scaffold_partial_mixed_support"
+        return candidate
+
+    # ------------------------------------------------------------------
+    # C. Fallback
+    # ------------------------------------------------------------------
+    candidate.fragment_class = "ambiguous_partial"
+    candidate.classification_reason = "unclassified_disrupted_projection"
+    return candidate
