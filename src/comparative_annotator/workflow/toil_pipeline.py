@@ -666,7 +666,7 @@ def annotate_missing_loci_and_choose_next(
                         source_protein_length=source_protein_length,
                     )
             
-                    candidate = classify_fragmented_candidate(candidate)
+                    candidate = classify_disrupted_projection_candidate(candidate)
                     fragmented_candidates_by_species[target_species].append(candidate)
 
             projected_transcripts.extend(pts)
