@@ -499,6 +499,7 @@ def annotate_missing_loci_and_choose_next(
 
     new_consensus_by_species = {}
     fragmented_by_species = {}
+    fragmented_candidates_by_species = {}
     skipped_missing_payloads = []
 
     for target_species, payloads in missing_by_target.items():
@@ -546,6 +547,7 @@ def annotate_missing_loci_and_choose_next(
                         "target_end": iv.end,
                         "target_strand": iv.strand,
                         "chain_score": getattr(iv, "chain_score", None),
+                        "n_source_exons": len(seed.exons),
                     })
 
             pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
