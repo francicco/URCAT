@@ -124,6 +124,7 @@ def collect_projected_transcript_spans_for_species(
     for source_species in source_species_list:
         if source_species == target_species:
             continue
+
         for _, seed in transcripts_by_species.get(source_species, {}).items():
             projected_exon_blocks = []
             for exon_start, exon_end in seed.exons:
@@ -137,52 +138,20 @@ def collect_projected_transcript_spans_for_species(
                     source_transcript=seed.transcript_id,
                 )
                 projected_exon_blocks.append(intervals)
+
             pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
 
-            def exon_recovery(tx):
-                return len(tx.exons) / max(1, len(seed.exons))
-
-
-            # Case 1: no reconstruction
-            is_failed = not pts
-
-            # Case 2: poor reconstruction (fragmented)
-            is_partial = any(exon_recovery(tx) < 0.6 for tx in pts)
-
-            if is_failed or is_partial:
-                candidate = build_fragmented_candidate(
-                    source_species=seed.species,
-                    source_transcript=seed.transcript_id,
-                    target_species=target_species,
-                    source_seqid=seed.seqid,
-                    source_strand=seed.strand,
-                    n_source_exons=len(seed.exons),
-                    projected_blocks=[
-                        {
-                            "source_exon_number": exon_idx,
-                            "target_seqid": iv.seqid,
-                            "target_start": iv.start,
-                            "target_end": iv.end,
-                            "target_strand": iv.strand,
-                            "chain_score": getattr(iv, "chain_score", None),
-                        }
-                        for exon_idx, iv in projected_intervals
-                    ],
-                )
-
-                if candidate is not None:
-                    fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
-
-            
             for pt in pts:
-                spans.append({
-                    "seqid": pt.seqid,
-                    "start": pt.start,
-                    "end": pt.end,
-                    "strand": pt.strand,
-                    "source_species": source_species,
-                    "source_transcript": pt.source_transcript,
-                })
+                spans.append(
+                    {
+                        "seqid": pt.seqid,
+                        "start": pt.start,
+                        "end": pt.end,
+                        "strand": pt.strand,
+                        "source_species": source_species,
+                        "source_transcript": pt.source_transcript,
+                    }
+                )
     return spans
 
 
