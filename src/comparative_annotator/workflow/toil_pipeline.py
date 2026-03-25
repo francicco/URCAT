@@ -553,6 +553,32 @@ def annotate_missing_loci_and_choose_next(
             pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
             projected_transcripts.extend(pts)
 
+        grouped_blocks = {}
+        for row in projected_blocks_for_summary:
+            key = (
+                row["source_species"],
+                row["source_transcript"],
+                row["target_species"],
+            )
+            grouped_blocks.setdefault(key, []).append(row)
+
+        fragmented_candidates = []
+        for (src_species, src_tx, tgt_species), blocks in grouped_blocks.items():
+            first = blocks[0]
+            candidate = build_fragmented_candidate(
+                source_species=src_species,
+                source_transcript=src_tx,
+                target_species=tgt_species,
+                source_seqid=first["source_seqid"],
+                source_strand=first["source_strand"],
+                n_source_exons=first["n_source_exons"],
+                projected_blocks=blocks,
+            )
+            if candidate is not None:
+                fragmented_candidates.append(candidate)
+
+        fragmented_candidates_by_species[target_species] = fragmented_candidates
+        
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
             consensuses = [
