@@ -43,6 +43,9 @@ class FragmentedComparativeLocus:
     fragment_class: str | None = None
     classification_reason: str | None = None
 
+    max_consecutive_recovered_exons: int | None = None
+    consecutive_exon_fraction: float | None = None
+
     def to_row(self) -> dict:
         return {
             "source_species": self.source_species,
