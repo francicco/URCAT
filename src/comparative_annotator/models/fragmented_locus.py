@@ -69,5 +69,7 @@ class FragmentedComparativeLocus:
             "protein_support_class": self.protein_support_class,
             "fragment_class": self.fragment_class,
             "classification_reason": self.classification_reason,
+            "max_consecutive_recovered_exons": self.max_consecutive_recovered_exons,
+            "consecutive_exon_fraction": None if self.consecutive_exon_fraction is None else round(self.consecutive_exon_fraction, 4),
             "status": self.status,
         }
