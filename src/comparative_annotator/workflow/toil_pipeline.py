@@ -24,7 +24,7 @@ from comparative_annotator.missing.consensus import (
 from comparative_annotator.workflow.fragmented_join import (
     build_fragmented_candidate,
     add_protein_support_to_candidate,
-    classify_fragmented_candidate,
+    classify_disrupted_projection_candidate,
 )
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
