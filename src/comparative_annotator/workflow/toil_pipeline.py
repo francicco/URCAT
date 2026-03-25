@@ -21,7 +21,11 @@ from comparative_annotator.missing.consensus import (
     choose_missing_locus_strand,
     cluster_projected_transcripts,
 )
-from comparative_annotator.workflow.fragmented_join import build_fragmented_candidate
+from comparative_annotator.workflow.fragmented_join import (
+    build_fragmented_candidate,
+    add_protein_support_to_candidate,
+    classify_fragmented_candidate,
+)
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
 from comparative_annotator.workflow.progressive import (
@@ -150,6 +154,22 @@ def collect_projected_transcript_spans_for_species(
                 )
 
     return spans
+
+def _estimate_source_protein_length_from_transcript(seed) -> int | None:
+    """
+    Temporary approximation until CDS-aware transcript objects are available.
+    Uses spliced transcript length / 3.
+    """
+    if not getattr(seed, "exons", None):
+        return None
+
+    nt_len = 0
+    for start, end in seed.exons:
+        nt_len += (end - start)
+    if nt_len <= 0:
+        return None
+
+    return max(1, nt_len // 3)
 
 
 def finalize_round_outputs(output_dir: str, round_id: int) -> None:
@@ -500,6 +520,52 @@ def annotate_missing_loci_and_choose_next(
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
 
+    from comparative_annotator.workflow.sequence_prep import (
+        load_all_species_sequences,
+        prepare_diamond_inputs,
+        run_diamond,
+        load_diamond_results,
+    )
+    
+    seq_cache_dir = Path(workdir) / "sequence_cache"
+    diamond_cache_dir = Path(workdir) / "diamond_cache"
+    diamond_cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    sequences_by_species = load_all_species_sequences(
+        workdir=workdir,
+        annotation_dir="",
+        annotation_suffix="",
+        species_list=species_list,
+        hal_path=cfg.hal_path,
+    )
+    
+    diamond_cache = {}
+    for source_species in species_list:
+        if source_species == current_reference:
+            continue
+        for target_species in species_list:
+            if source_species == target_species:
+                continue
+    
+            src_paths = sequences_by_species.get(source_species, {})
+            tgt_paths = sequences_by_species.get(target_species, {})
+            if not src_paths.get("aa_fa") or not tgt_paths.get("aa_fa"):
+                continue
+    
+            out_tsv = diamond_cache_dir / f"{source_species}_vs_{target_species}.tsv"
+            tmp_prefix = str(diamond_cache_dir / f"{source_species}_vs_{target_species}")
+    
+            if not out_tsv.exists():
+                run_diamond(
+                    query_fa=src_paths["aa_fa"],
+                    target_fa=tgt_paths["aa_fa"],
+                    out_tsv=str(out_tsv),
+                    tmp_prefix=tmp_prefix,
+                    threads=1,
+                )
+    
+            diamond_cache[(source_species, target_species)] = load_diamond_results(str(out_tsv))
+
     round_merged = read_json(round_merged_path)
     missing_by_target = extract_missing_locus_payloads(round_merged)
     explained_locus_ids_by_species = collect_explained_locus_ids_from_round(round_merged)
@@ -590,7 +656,17 @@ def annotate_missing_loci_and_choose_next(
                     n_source_exons=len(seed.exons),
                     projected_blocks=projected_block_rows,
                 )
+            
                 if candidate is not None:
+                    source_protein_length = _estimate_source_protein_length_from_transcript(seed)
+            
+                    candidate = add_protein_support_to_candidate(
+                        candidate,
+                        diamond_hits_for_source=diamond_cache.get((source_species, target_species), {}),
+                        source_protein_length=source_protein_length,
+                    )
+            
+                    candidate = classify_fragmented_candidate(candidate)
                     fragmented_candidates_by_species[target_species].append(candidate)
 
             projected_transcripts.extend(pts)
