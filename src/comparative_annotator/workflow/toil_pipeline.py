@@ -682,6 +682,10 @@ def annotate_missing_loci_and_choose_next(
         "reference_species": current_reference,
         "reference_order": reference_order,
         "used_reference_species": updated_used,
+        "fragmented_candidates_by_species": {
+            sp: [x.to_row() for x in xs]
+                for sp, xs in fragmented_candidates_by_species.items()
+        },
         "new_consensus_by_species": {
             sp: [
                 {
