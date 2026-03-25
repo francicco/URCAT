@@ -553,8 +553,42 @@ def annotate_missing_loci_and_choose_next(
                     })
 
             pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
-            projected_transcripts.extend(pts)
 
+            projected_block_rows = []
+            for exon_idx2, exon_intervals in enumerate(projected_exon_blocks, start=1):
+                for iv in exon_intervals:
+                    projected_block_rows.append(
+                        {
+                            "source_exon_number": exon_idx2,
+                            "target_seqid": iv.seqid,
+                            "target_start": iv.start,
+                            "target_end": iv.end,
+                            "target_strand": iv.strand,
+                            "chain_score": getattr(iv, "chain_score", None),
+                        }
+                    )
+
+            def exon_recovery(tx):
+                return len(tx.exons) / max(1, len(seed.exons))
+
+            is_failed = not pts
+            is_partial = any(exon_recovery(tx) < 0.6 for tx in pts)
+
+            if is_failed or is_partial:
+                candidate = build_fragmented_candidate(
+                    source_species=seed.species,
+                    source_transcript=seed.transcript_id,
+                    target_species=target_species,
+                    source_seqid=seed.seqid,
+                    source_strand=seed.strand,
+                    n_source_exons=len(seed.exons),
+                    projected_blocks=projected_block_rows,
+                )
+                if candidate is not None:
+                    fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
+
+            projected_transcripts.extend(pts)
+            
         grouped_blocks = {}
         for row in projected_blocks_for_summary:
             key = (
