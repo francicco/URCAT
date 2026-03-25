@@ -1218,46 +1218,33 @@ def run_round_zero(
 
 
 def main():
-    from argparse import ArgumentParser
+    # getDefaultArgumentParser() uses configargparse and already registers
+    # --config for INI-file support. Use --urcatConfig for URCAT's own config
+    # to avoid the conflict we hit with --config.
+    parser = Job.Runner.getDefaultArgumentParser()
+    parser.add_argument("--urcatConfig", required=True, help="Path to URCAT INI config file")
+    parser.add_argument("--outputDir", required=True, help="Workflow output directory")
 
-    parser = ArgumentParser()
-    Job.Runner.addToilOptions(parser)
+    args = parser.parse_args()
 
-    parser.add_argument("--outputDir", required=True)
-    parser.add_argument("--seedSpecies", required=True)
-    parser.add_argument("--speciesCsv", required=True)
-    parser.add_argument("--halPath", required=True)
-    parser.add_argument("--annotationDir", required=True)
-    parser.add_argument("--annotationSuffix", default=".test.gff3")
-    parser.add_argument("--batchSize", type=int, default=200)
-
-    options = parser.parse_args()
-
-    output_dir = str(Path(options.outputDir).resolve())
-    annotation_dir = str(Path(options.annotationDir).resolve())
-    hal_path = str(Path(options.halPath).resolve())
+    cfg = load_urcat_config(args.urcatConfig)
+    output_dir = str(Path(args.outputDir).resolve())
 
     root = Job.wrapJobFn(
         run_round_zero,
         output_dir,
-        annotation_dir,
-        options.annotationSuffix,
-        hal_path,
-        options.speciesCsv,
-        options.seedSpecies,
-        options.batchSize,
+        cfg,
         memory="2G",
         disk="2G",
     )
 
-    with Toil(options) as toil:
+    with Toil(args) as toil:
         toil.start(root)
 
     write_final_species_gff3s(
-        output_dir,
-        annotation_dir,
-        options.annotationSuffix,
-        options.speciesCsv,
+        output_dir=output_dir,
+        annotation_paths=cfg.annotation_paths,
+        species_list=cfg.species_list,
     )
 
 
