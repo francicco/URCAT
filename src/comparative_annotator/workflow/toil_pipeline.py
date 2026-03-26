@@ -665,7 +665,19 @@ def annotate_missing_loci_and_choose_next(
                         diamond_hits_for_source=diamond_cache.get((source_species, target_species), {}),
                         source_protein_length=source_protein_length,
                     )
-            
+
+                    # >>> PUT YOUR DEBUG PRINT HERE <<<
+                    print(
+                        "PROTDEBUG",
+                        candidate.source_transcript,
+                        candidate.target_species,
+                        "pid=", getattr(candidate, "aa_identity_mean", None),
+                        "cov=", getattr(candidate, "aa_coverage_fraction", None),
+                        "bitscore=", getattr(candidate, "aa_bitscore", None),
+                        "protein_support_class=", getattr(candidate, "protein_support_class", None),
+                    )
+
+                    # STEP 3: classification
                     candidate = classify_disrupted_projection_candidate(candidate)
                     fragmented_candidates_by_species[target_species].append(candidate)
 
