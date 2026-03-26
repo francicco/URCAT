@@ -26,6 +26,7 @@ def build_fragmented_candidate(
     max_target_seqids: int = 4,
 ) -> FragmentedComparativeLocus | None:
     if not projected_blocks:
+        print("FRAGREJECT no_projected_blocks", source_species, source_transcript, target_species)
         return None
 
     by_exon = defaultdict(list)
@@ -50,13 +51,40 @@ def build_fragmented_candidate(
         if r["target_seqid"] not in target_seqids:
             target_seqids.append(r["target_seqid"])
 
+    print(
+        "FRAGDEBUG",
+        source_species,
+        source_transcript,
+        target_species,
+        "n_source_exons=", n_source_exons,
+        "n_recovered=", n_recovered,
+        "recovery=", round(exon_recovery_fraction, 3),
+        "n_target_seqids=", len(target_seqids),
+        "target_seqids=", ",".join(target_seqids),
+    )
+
     if n_recovered < min_recovered_exons:
+        print("FRAGREJECT too_few_recovered_exons", source_transcript, n_recovered)
         return None
+
     if exon_recovery_fraction < min_exon_recovery_fraction:
+        print("FRAGREJECT low_recovery_fraction", source_transcript, exon_recovery_fraction)
         return None
-    if len(target_seqids) < 2:
+
+    multi_seqid_fragment = len(target_seqids) >= 2
+    single_seqid_partial = (
+        len(target_seqids) == 1
+        and n_recovered >= min_recovered_exons
+        and exon_recovery_fraction >= min_exon_recovery_fraction
+        and exon_recovery_fraction < 0.8
+    )
+
+    if not (multi_seqid_fragment or single_seqid_partial):
+        print("FRAGREJECT neither_multi_seqid_nor_single_partial", source_transcript)
         return None
+
     if len(target_seqids) > max_target_seqids:
+        print("FRAGREJECT too_many_target_seqids", source_transcript, len(target_seqids))
         return None
 
     strand_set = {r["target_strand"] for r in chosen}
@@ -85,8 +113,19 @@ def build_fragmented_candidate(
         - 0.75 * (len(target_seqids) - 1)
     )
 
+    print(
+        "FRAGDEBUG_SCORE",
+        source_transcript,
+        "strand_consistent=", strand_consistent,
+        "exon_order_consistent=", exon_order_consistent,
+        "join_score=", round(join_score, 3),
+    )
+
     if join_score < 2.5:
+        print("FRAGREJECT low_join_score", source_transcript, join_score)
         return None
+
+    print("FRAGACCEPT", source_transcript, target_species)
 
     return FragmentedComparativeLocus(
         source_species=source_species,
