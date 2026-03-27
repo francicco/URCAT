@@ -533,10 +533,9 @@ def annotate_missing_loci_and_choose_next(
     
     sequences_by_species = load_all_species_sequences(
         workdir=workdir,
-        annotation_dir="",
-        annotation_suffix="",
         species_list=species_list,
         hal_path=cfg.hal_path,
+        annotation_paths=cfg.annotation_paths,
     )
     
     diamond_cache = {}
