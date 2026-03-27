@@ -130,10 +130,10 @@ def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
 
 def prepare_species_sequences(
     workdir: str,
-    annotation_dir: str,
-    annotation_suffix: str,
     species_list: list[str],
     hal_path: str,
+    annotation_dir: str | None = None,
+    annotation_paths: dict[str, str] | None = None,    
 ) -> dict[str, dict[str, str | bool | None]]:
     """
     For each species:
