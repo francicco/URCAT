@@ -62,8 +62,7 @@ def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, s
     """
     Extract mRNA, CDS, and protein FASTA with gffread.
 
-    Some runs may fail to emit one or more outputs for edge cases. To keep the
-    pipeline robust, missing outputs are replaced by empty files.
+    Missing outputs are replaced by empty files so downstream code can proceed.
     """
     prefix_path = Path(prefix)
     _safe_mkdir(prefix_path.parent)
@@ -104,10 +103,7 @@ def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, s
 
 def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
     """
-    Replace DIAMOND-invalid protein symbols with X.
-
-    In practice this mainly fixes '.' characters, but it also sanitizes any
-    other unexpected residue symbols.
+    Replace DIAMOND-invalid amino-acid symbols with X.
     """
     in_path = Path(in_fa)
     out_path = Path(out_fa) if out_fa is not None else in_path
@@ -132,8 +128,7 @@ def prepare_species_sequences(
     workdir: str,
     species_list: list[str],
     hal_path: str,
-    annotation_dir: str | None = None,
-    annotation_paths: dict[str, str] | None = None,    
+    annotation_paths: dict[str, str],
 ) -> dict[str, dict[str, str | bool | None]]:
     """
     For each species:
@@ -142,7 +137,6 @@ def prepare_species_sequences(
     - sanitize AA FASTA for DIAMOND
     """
     workdir_p = Path(workdir)
-    annotation_dir_p = Path(annotation_dir)
     cache_dir = workdir_p / "sequence_cache"
     _safe_mkdir(cache_dir)
 
@@ -156,9 +150,10 @@ def prepare_species_sequences(
             out_fasta=str(genome_fa),
         )
 
-        gff = annotation_dir_p / f"{species}{annotation_suffix}"
+        gff_str = annotation_paths.get(species, "")
+        gff = Path(gff_str) if gff_str else None
 
-        if not gff.exists():
+        if gff is None or not gff.exists():
             out[species] = {
                 "genome_fa": str(genome_fa),
                 "mrna_fa": None,
@@ -190,22 +185,19 @@ def prepare_species_sequences(
 
 def load_all_species_sequences(
     workdir: str,
-    annotation_dir: str,
-    annotation_suffix: str,
     species_list: list[str],
     hal_path: str,
+    annotation_paths: dict[str, str],
 ) -> dict[str, dict[str, str | bool | None]]:
     return prepare_species_sequences(
         workdir=workdir,
-        annotation_dir=annotation_dir,
-        annotation_suffix=annotation_suffix,
         species_list=species_list,
         hal_path=hal_path,
+        annotation_paths=annotation_paths,
     )
 
 
 def prepare_diamond_inputs(
-    cache_dir: str,
     source_species: str,
     target_species: str,
     sequences_by_species: dict[str, dict[str, str | bool | None]],
