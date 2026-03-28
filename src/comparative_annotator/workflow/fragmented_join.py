@@ -361,7 +361,7 @@ def classify_disrupted_projection_candidate(candidate):
     prot = candidate.protein_support_class or "no_protein_evidence"
     rec = candidate.exon_recovery_fraction or 0.0
     cons = candidate.consecutive_exon_fraction or 0.0
-    nseq = candidate.n_target_seqids or 0
+    nseq = len(candidate.target_seqids) if candidate.target_seqids else 0
     strand_ok = bool(candidate.strand_consistent)
     order_ok = bool(candidate.exon_order_consistent)
 
