@@ -19,7 +19,6 @@ class URCATConfig:
 def _require(cfg: configparser.ConfigParser, section: str, key: str) -> str:
     if not cfg.has_section(section):
         raise ValueError(f"Missing required section [{section}]")
-
     value = cfg.get(section, key, fallback="").strip()
     if not value:
         raise ValueError(f"Missing required key '{key}' in section [{section}]")
@@ -34,10 +33,19 @@ def _optional(cfg: configparser.ConfigParser, section: str, key: str, default: s
 
 def get_species_list_from_hal(hal_path: str) -> list[str]:
     """
-    Parse species/genome names from halStats output.
+    Parse leaf species/genome names from halStats output.
 
-    This expects halStats to print a line like:
-        Genomes: Hmel Eisa Etal Diul
+    Current halStats output looks like:
+
+        hal v2.2
+        (<tree>);
+
+        GenomeName, NumChildren, Length, ...
+        Heliconiini, 2, ...
+        Diul, 0, ...
+        ...
+
+    We treat rows with NumChildren == 0 as leaf species.
     """
     result = subprocess.run(
         ["halStats", hal_path],
@@ -46,32 +54,38 @@ def get_species_list_from_hal(hal_path: str) -> list[str]:
         check=True,
     )
 
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("Genomes:"):
-            genomes = line.split(":", 1)[1].strip()
-            species = [x.strip() for x in genomes.split() if x.strip()]
-            if not species:
-                break
-            return species
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
-    raise RuntimeError(f"Could not parse species list from halStats output for: {hal_path}")
+    header_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("GenomeName") and "NumChildren" in line:
+            header_idx = i
+            break
+
+    if header_idx is None:
+        raise RuntimeError(f"Could not find GenomeName/NumChildren table in halStats output for: {hal_path}")
+
+    species: list[str] = []
+    for line in lines[header_idx + 1 :]:
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        genome_name = parts[0]
+        try:
+            num_children = int(parts[1])
+        except ValueError:
+            continue
+        if num_children == 0:
+            species.append(genome_name)
+
+    if not species:
+        raise RuntimeError(f"Could not parse leaf species list from halStats output for: {hal_path}")
+
+    return species
 
 
-def _load_annotation_paths(
-    cfg: configparser.ConfigParser,
-    config_dir: Path,
-) -> dict[str, str]:
-    """
-    Load [annotation] entries as explicit species -> GFF3 path mappings.
-
-    Example:
-        [annotation]
-        Hmel = data/Hmel.test.gff3
-        Eisa = data/Eisa.test.gff3
-    """
+def _load_annotation_paths(cfg: configparser.ConfigParser, config_dir: Path) -> dict[str, str]:
     annotation_paths: dict[str, str] = {}
-
     if not cfg.has_section("annotation"):
         return annotation_paths
 
@@ -95,24 +109,7 @@ def _load_evidence(
     config_dir: Path,
     species_list: list[str],
 ) -> dict[str, dict[str, str]]:
-    """
-    Load [evidence] into nested structure:
-        evidence[species][evidence_type] = path
-
-    Example input:
-        [evidence]
-        Hmel_bam = data/Hmel.bam
-        Eisa_bam = data/Eisa.bam
-
-    Result:
-        {
-            "Hmel": {"bam": "/abs/path/data/Hmel.bam"},
-            "Eisa": {"bam": "/abs/path/data/Eisa.bam"},
-            ...
-        }
-    """
     evidence: dict[str, dict[str, str]] = {sp: {} for sp in species_list}
-
     if not cfg.has_section("evidence"):
         return evidence
 
@@ -123,11 +120,12 @@ def _load_evidence(
             continue
 
         matched_species = None
+        evidence_type = None
         for sp in species_list:
             prefix = f"{sp}_"
             if key.startswith(prefix):
                 matched_species = sp
-                evidence_type = key[len(prefix):]
+                evidence_type = key[len(prefix) :]
                 break
 
         if matched_species is None or not evidence_type:
