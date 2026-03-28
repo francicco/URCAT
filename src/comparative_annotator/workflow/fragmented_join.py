@@ -184,51 +184,96 @@ def build_fragmented_candidate(
 
 
 def add_protein_support_to_candidate(
-    candidate: FragmentedComparativeLocus,
-    *,
-    diamond_hits_for_source: dict | None,
-    source_protein_length: int | None = None,
-) -> FragmentedComparativeLocus:
+    candidate,
+    diamond_hits_for_source: dict[tuple[str, str], dict],
+    source_protein_length: int,
+):
     """
-    diamond_hits_for_source:
-      dict of {(qseqid, sseqid): {"pid": ..., "aln_len": ..., "bitscore": ..., "evalue": ...}}
-      typically one source-vs-target DIAMOND result table.
+    Attach protein support to a fragmented/disrupted candidate.
 
-    We summarize support over all hits for the source transcript.
+    Coverage is computed from the union of covered query intervals, not from
+    the sum of HSP lengths, to avoid coverage > 1.0 due to overlapping hits.
     """
+    candidate.aa_identity_mean = None
+    candidate.aa_coverage_fraction = None
+    candidate.aa_bitscore = None
+    candidate.protein_support_class = "no_protein_evidence"
+
     if not diamond_hits_for_source:
-        candidate.protein_support_class = "no_protein_evidence"
         return candidate
 
-    source_tx = candidate.source_transcript
-    matched = []
+    source_tx_norm = _normalize_tx_id(candidate.source_transcript)
+    target_seqids = set(candidate.target_seqids)
+
+    matched_hits = []
+
     for (qseqid, sseqid), hit in diamond_hits_for_source.items():
-        if qseqid == source_tx:
-            matched.append(hit)
+        if _normalize_tx_id(qseqid) != source_tx_norm:
+            continue
 
-    if not matched:
-        candidate.protein_support_class = "no_protein_evidence"
+        # If your sseqid encodes target transcript IDs rather than seqids,
+        # you may want to relax this filter later. For now we keep all query-matching hits.
+        matched_hits.append(((qseqid, sseqid), hit))
+
+    if not matched_hits:
         return candidate
 
-    matched = sorted(matched, key=lambda x: x.get("bitscore", 0.0), reverse=True)
+    # Identity and bitscore: use best-supported hit set
+    pidents = []
+    bitscores = []
 
-    candidate.aa_identity_mean = _mean([float(h["pid"]) for h in matched]) / 100.0
-    candidate.aa_bitscore = float(matched[0]["bitscore"])
+    # Coverage: union of query intervals if present, otherwise fall back safely
+    query_intervals = []
 
-    if source_protein_length and source_protein_length > 0:
-        best_aln_len = max(int(h["aln_len"]) for h in matched)
-        candidate.aa_coverage_fraction = best_aln_len / source_protein_length
+    for (_, _), hit in matched_hits:
+        pid = hit.get("pid")
+        bitscore = hit.get("bitscore")
+
+        if pid is not None:
+            pidents.append(float(pid))
+        if bitscore is not None:
+            bitscores.append(float(bitscore))
+
+        # Preferred: explicit query coordinates from DIAMOND parser
+        qstart = hit.get("qstart")
+        qend = hit.get("qend")
+        if qstart is not None and qend is not None:
+            query_intervals.append((int(qstart), int(qend)))
+
+    if pidents:
+        candidate.aa_identity_mean = sum(pidents) / len(pidents)
+
+    if bitscores:
+        candidate.aa_bitscore = max(bitscores)
+
+    if query_intervals:
+        merged = _merge_intervals(query_intervals)
+        covered_query_len = _intervals_total_length(merged)
+        candidate.aa_coverage_fraction = min(covered_query_len / max(1, source_protein_length), 1.0)
     else:
-        candidate.aa_coverage_fraction = None
+        # Fallback if qstart/qend are not available yet in parsed DIAMOND results.
+        # Use best single-hit alignment length only, not sum across hits.
+        aln_lens = [
+            int(hit["aln_len"])
+            for (_, _), hit in matched_hits
+            if hit.get("aln_len") is not None
+        ]
+        if aln_lens:
+            candidate.aa_coverage_fraction = min(
+                max(aln_lens) / max(1, source_protein_length),
+                1.0,
+            )
 
-    pid = candidate.aa_identity_mean or 0.0
-    cov = candidate.aa_coverage_fraction if candidate.aa_coverage_fraction is not None else 0.0
+    pid = candidate.aa_identity_mean
+    cov = candidate.aa_coverage_fraction
 
-    if pid >= 0.80 and cov >= 0.30:
+    if pid is None or cov is None:
+        candidate.protein_support_class = "no_protein_evidence"
+    elif pid >= 0.80 and cov >= 0.80:
         candidate.protein_support_class = "strong"
-    elif pid >= 0.65 and cov >= 0.20:
+    elif pid >= 0.60 and cov >= 0.50:
         candidate.protein_support_class = "moderate"
-    elif pid >= 0.50:
+    elif pid >= 0.45 and cov >= 0.30:
         candidate.protein_support_class = "weak"
     else:
         candidate.protein_support_class = "poor"
