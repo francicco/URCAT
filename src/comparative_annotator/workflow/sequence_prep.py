@@ -343,6 +343,8 @@ def run_diamond(
             "sseqid",
             "pident",
             "length",
+            "qstart",
+            "qend",
             "bitscore",
             "evalue",
             "--threads",
