@@ -21,11 +21,7 @@ from comparative_annotator.missing.consensus import (
     choose_missing_locus_strand,
     cluster_projected_transcripts,
 )
-from comparative_annotator.workflow.fragmented_join import (
-    build_fragmented_candidate,
-    add_protein_support_to_candidate,
-    classify_disrupted_projection_candidate,
-)
+from comparative_annotator.workflow.fragmented_join import build_fragmented_candidate
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
 from comparative_annotator.workflow.progressive import (
@@ -60,21 +56,25 @@ def read_json(path):
     with open(path) as fh:
         return json.load(fh)
 
+
 def write_json(path, obj):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as fh:
         json.dump(obj, fh, indent=2, sort_keys=True)
 
+
 def chunked(items, size):
     for i in range(0, len(items), size):
         yield items[i:i + size]
+
 
 def append_unique_preserve_order(items, value):
     out = list(items)
     if value not in out:
         out.append(value)
     return out
+
 
 def get_hal_tree_newick(hal_path: str) -> str:
     result = subprocess.run(
@@ -119,15 +119,14 @@ def collect_projected_transcript_spans_for_species(
     target_species,
     hal,
 ):
+    """Project all source transcripts into target_species; return span dicts."""
     spans = []
-
     for source_species in source_species_list:
         if source_species == target_species:
             continue
 
         for _, seed in transcripts_by_species.get(source_species, {}).items():
             projected_exon_blocks = []
-
             for exon_start, exon_end in seed.exons:
                 intervals = hal.project_interval(
                     source_species=seed.species,
@@ -141,6 +140,7 @@ def collect_projected_transcript_spans_for_species(
                 projected_exon_blocks.append(intervals)
 
             pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+
             for pt in pts:
                 spans.append(
                     {
@@ -152,24 +152,7 @@ def collect_projected_transcript_spans_for_species(
                         "source_transcript": pt.source_transcript,
                     }
                 )
-
     return spans
-
-def _estimate_source_protein_length_from_transcript(seed) -> int | None:
-    """
-    Temporary approximation until CDS-aware transcript objects are available.
-    Uses spliced transcript length / 3.
-    """
-    if not getattr(seed, "exons", None):
-        return None
-
-    nt_len = 0
-    for start, end in seed.exons:
-        nt_len += (end - start)
-    if nt_len <= 0:
-        return None
-
-    return max(1, nt_len // 3)
 
 
 def finalize_round_outputs(output_dir: str, round_id: int) -> None:
@@ -503,13 +486,8 @@ def merge_round_results(job, workdir, round_id, reference_species, merged_target
 
 
 def annotate_missing_loci_and_choose_next(
-    job,
-    workdir,
-    cfg: URCATConfig,
-    round_id,
-    current_reference,
-    round_merged_path,
-    used_reference_species,
+    job, workdir, cfg: URCATConfig, round_id,
+    current_reference, round_merged_path, used_reference_species,
 ):
     from comparative_annotator.workflow.new_loci_gff3 import write_new_loci_gff3
     from comparative_annotator.workflow.fragmented_loci_table import write_fragmented_loci_table
@@ -519,51 +497,6 @@ def annotate_missing_loci_and_choose_next(
     transcripts_by_species = load_all_transcripts(cfg.annotation_paths, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
-
-    from comparative_annotator.workflow.sequence_prep import (
-        load_all_species_sequences,
-        prepare_diamond_inputs,
-        run_diamond,
-        load_diamond_results,
-    )
-    
-    seq_cache_dir = Path(workdir) / "sequence_cache"
-    diamond_cache_dir = Path(workdir) / "diamond_cache"
-    diamond_cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    sequences_by_species = load_all_species_sequences(
-        workdir=workdir,
-        species_list=species_list,
-        hal_path=cfg.hal_path,
-        annotation_paths=cfg.annotation_paths,
-    )
-    
-    diamond_cache = {}
-    for source_species in species_list:
-        if source_species == current_reference:
-            continue
-        for target_species in species_list:
-            if source_species == target_species:
-                continue
-    
-            src_paths = sequences_by_species.get(source_species, {})
-            tgt_paths = sequences_by_species.get(target_species, {})
-            if not src_paths.get("aa_fa") or not tgt_paths.get("aa_fa"):
-                continue
-    
-            out_tsv = diamond_cache_dir / f"{source_species}_vs_{target_species}.tsv"
-            tmp_prefix = str(diamond_cache_dir / f"{source_species}_vs_{target_species}")
-    
-            if not out_tsv.exists():
-                run_diamond(
-                    query_fa=src_paths["aa_fa"],
-                    target_fa=tgt_paths["aa_fa"],
-                    out_tsv=str(out_tsv),
-                    tmp_prefix=tmp_prefix,
-                    threads=1,
-                )
-    
-            diamond_cache[(source_species, target_species)] = load_diamond_results(str(out_tsv))
 
     round_merged = read_json(round_merged_path)
     missing_by_target = extract_missing_locus_payloads(round_merged)
@@ -575,7 +508,6 @@ def annotate_missing_loci_and_choose_next(
     skipped_missing_payloads = []
 
     for target_species, payloads in missing_by_target.items():
-        fragmented_candidates_by_species.setdefault(target_species, [])
         projected_transcripts = []
         projected_blocks_for_summary = []
 
@@ -584,19 +516,16 @@ def annotate_missing_loci_and_choose_next(
             source_tx_id = payload["source_transcript"]
 
             if source_tx_id not in transcripts_by_species.get(source_species, {}):
-                skipped_missing_payloads.append(
-                    {
-                        "target_species": target_species,
-                        "source_species": source_species,
-                        "source_transcript": source_tx_id,
-                        "reason": "source_transcript_not_found",
-                    }
-                )
+                skipped_missing_payloads.append({
+                    "target_species": target_species,
+                    "source_species": source_species,
+                    "source_transcript": source_tx_id,
+                    "reason": "source_transcript_not_found",
+                })
                 continue
 
             seed = transcripts_by_species[source_species][source_tx_id]
             projected_exon_blocks = []
-            projected_block_rows = []
 
             for exon_idx, (exon_start, exon_end) in enumerate(seed.exons, start=1):
                 intervals = hal.project_interval(
@@ -611,7 +540,7 @@ def annotate_missing_loci_and_choose_next(
                 projected_exon_blocks.append(intervals)
 
                 for iv in intervals:
-                    row = {
+                    projected_blocks_for_summary.append({
                         "source_species": seed.species,
                         "source_transcript": seed.transcript_id,
                         "target_species": target_species,
@@ -624,73 +553,44 @@ def annotate_missing_loci_and_choose_next(
                         "target_strand": iv.strand,
                         "chain_score": getattr(iv, "chain_score", None),
                         "n_source_exons": len(seed.exons),
-                    }
-                    projected_blocks_for_summary.append(row)
-                    projected_block_rows.append(
-                        {
-                            "source_exon_number": exon_idx,
-                            "target_seqid": iv.seqid,
-                            "target_start": iv.start,
-                            "target_end": iv.end,
-                            "target_strand": iv.strand,
-                            "chain_score": getattr(iv, "chain_score", None),
-                        }
-                    )
+                    })
 
             pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
-
-            def exon_recovery(tx):
-                return len(tx.exons) / max(1, len(seed.exons))
-
-            is_failed = not pts
-            is_partial = any(exon_recovery(tx) < 0.6 for tx in pts)
-
-            if is_failed or is_partial:
-                candidate = build_fragmented_candidate(
-                    source_species=seed.species,
-                    source_transcript=seed.transcript_id,
-                    target_species=target_species,
-                    source_seqid=seed.seqid,
-                    source_strand=seed.strand,
-                    n_source_exons=len(seed.exons),
-                    projected_blocks=projected_block_rows,
-                )
-            
-                if candidate is not None:
-                    source_protein_length = _estimate_source_protein_length_from_transcript(seed)
-            
-                    candidate = add_protein_support_to_candidate(
-                        candidate,
-                        diamond_hits_for_source=diamond_cache.get((source_species, target_species), {}),
-                        source_protein_length=source_protein_length,
-                    )
-
-                    # >>> PUT YOUR DEBUG PRINT HERE <<<
-                    print(
-                        "PROTDEBUG",
-                        candidate.source_transcript,
-                        candidate.target_species,
-                        "pid=", getattr(candidate, "aa_identity_mean", None),
-                        "cov=", getattr(candidate, "aa_coverage_fraction", None),
-                        "bitscore=", getattr(candidate, "aa_bitscore", None),
-                        "protein_support_class=", getattr(candidate, "protein_support_class", None),
-                    )
-
-                    # STEP 3: classification
-                    candidate = classify_disrupted_projection_candidate(candidate)
-                    fragmented_candidates_by_species[target_species].append(candidate)
-
             projected_transcripts.extend(pts)
 
+        grouped_blocks = {}
+        for row in projected_blocks_for_summary:
+            key = (
+                row["source_species"],
+                row["source_transcript"],
+                row["target_species"],
+            )
+            grouped_blocks.setdefault(key, []).append(row)
+
+        fragmented_candidates = []
+        for (src_species, src_tx, tgt_species), blocks in grouped_blocks.items():
+            first = blocks[0]
+            candidate = build_fragmented_candidate(
+                source_species=src_species,
+                source_transcript=src_tx,
+                target_species=tgt_species,
+                source_seqid=first["source_seqid"],
+                source_strand=first["source_strand"],
+                n_source_exons=first["n_source_exons"],
+                projected_blocks=blocks,
+            )
+            if candidate is not None:
+                fragmented_candidates.append(candidate)
+
+        fragmented_candidates_by_species[target_species] = fragmented_candidates
+        
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
-            consensuses = []
-            for cluster in clusters:
-                best_strand, _ = choose_missing_locus_strand(cluster)
-                consensus = build_consensus_missing_transcript(cluster, best_strand)
-                if consensus is not None:
-                    consensuses.append(consensus)
-
+            consensuses = [
+                build_consensus_missing_transcript(cluster, choose_missing_locus_strand(cluster)[0])
+                for cluster in clusters
+            ]
+            consensuses = [c for c in consensuses if c is not None]
             if consensuses:
                 new_consensus_by_species[target_species] = consensuses
 
@@ -727,53 +627,43 @@ def annotate_missing_loci_and_choose_next(
         )
         explained_ids = explained_locus_ids_by_species.get(target_species, set())
 
-        orphan_loci = []
-        for locus in native_loci:
-            if locus.locus_id in explained_ids:
-                continue
-            if locus_overlaps_any_interval(locus, projected_spans):
-                continue
-
-            orphan_loci.append(
-                {
-                    "locus_id": locus.locus_id,
-                    "species": locus.species,
-                    "seqid": locus.seqid,
-                    "start": locus.start,
-                    "end": locus.end,
-                    "strand": locus.strand,
-                    "transcripts": locus.transcripts,
-                }
-            )
-
-        orphan_loci_by_species[target_species] = orphan_loci
+        orphan_loci_by_species[target_species] = [
+            {
+                "locus_id": locus.locus_id,
+                "species": locus.species,
+                "seqid": locus.seqid,
+                "start": locus.start,
+                "end": locus.end,
+                "strand": locus.strand,
+                "transcripts": locus.transcripts,
+            }
+            for locus in native_loci
+            if locus.locus_id not in explained_ids
+            and not locus_overlaps_any_interval(locus, projected_spans)
+        ]
 
     for sp in species_list:
         if sp in updated_used:
             continue
-
-        pending = []
-
-        for c in new_consensus_by_species.get(sp, []):
-            pending.append(
-                {
-                    "kind": "urcat_consensus",
-                    "species": c.species,
-                    "seqid": c.seqid,
-                    "start": min(e[0] for e in c.exons),
-                    "end": max(e[1] for e in c.exons),
-                    "strand": c.strand,
-                    "support_count": c.support_count,
-                    "total_chain_score": c.total_chain_score,
-                    "mean_exon_recovery": c.mean_exon_recovery,
-                    "source_transcripts": c.source_transcripts,
-                    "exons": c.exons,
-                }
-            )
-
-        for o in orphan_loci_by_species.get(sp, []):
-            pending.append({"kind": "orphan_native_locus", **o})
-
+        pending = [
+            {
+                "kind": "urcat_consensus",
+                "species": c.species,
+                "seqid": c.seqid,
+                "start": min(e[0] for e in c.exons),
+                "end": max(e[1] for e in c.exons),
+                "strand": c.strand,
+                "support_count": c.support_count,
+                "total_chain_score": c.total_chain_score,
+                "mean_exon_recovery": c.mean_exon_recovery,
+                "source_transcripts": c.source_transcripts,
+                "exons": c.exons,
+            }
+            for c in new_consensus_by_species.get(sp, [])
+        ] + [
+            {"kind": "orphan_native_locus", **o}
+            for o in orphan_loci_by_species.get(sp, [])
+        ]
         if pending:
             pending_frontiers_by_species[sp] = pending
 
@@ -799,14 +689,12 @@ def annotate_missing_loci_and_choose_next(
         "used_reference_species": updated_used,
         "fragmented_candidates_by_species": {
             sp: [x.to_row() for x in xs]
-            for sp, xs in fragmented_candidates_by_species.items()
+                for sp, xs in fragmented_candidates_by_species.items()
         },
         "new_consensus_by_species": {
             sp: [
                 {
-                    "species": c.species,
-                    "seqid": c.seqid,
-                    "strand": c.strand,
+                    "species": c.species, "seqid": c.seqid, "strand": c.strand,
                     "support_count": c.support_count,
                     "total_chain_score": c.total_chain_score,
                     "mean_exon_recovery": c.mean_exon_recovery,
@@ -827,43 +715,28 @@ def annotate_missing_loci_and_choose_next(
     }
 
     ref_out_path = (
-        Path(workdir)
-        / "rounds"
-        / f"round_{round_id:03d}"
-        / f"ref_{current_reference}"
-        / "post_round_decision.json"
+        Path(workdir) / "rounds" / f"round_{round_id:03d}"
+        / f"ref_{current_reference}" / "post_round_decision.json"
     )
     round_out_path = (
-        Path(workdir)
-        / "rounds"
-        / f"round_{round_id:03d}"
-        / "post_round_decision.json"
+        Path(workdir) / "rounds" / f"round_{round_id:03d}" / "post_round_decision.json"
     )
     write_json(ref_out_path, out)
     write_json(round_out_path, out)
 
     round_ref_dir = (
-        Path(workdir)
-        / "rounds"
-        / f"round_{round_id:03d}"
-        / f"ref_{current_reference}"
+        Path(workdir) / "rounds" / f"round_{round_id:03d}" / f"ref_{current_reference}"
     )
     round_ref_dir.mkdir(parents=True, exist_ok=True)
 
     for target_species, loci in new_consensus_by_species.items():
-        write_new_loci_gff3(
-            str(round_ref_dir / f"{target_species}.new_loci.gff3"),
-            target_species,
-            loci,
-        )
+        from comparative_annotator.workflow.new_loci_gff3 import write_new_loci_gff3
+        write_new_loci_gff3(str(round_ref_dir / f"{target_species}.new_loci.gff3"), target_species, loci)
 
     for target_species, loci in fragmented_by_species.items():
         write_fragmented_loci_table(
             str(round_ref_dir / f"{target_species}.fragmented_loci.tsv"),
-            round_id,
-            current_reference,
-            target_species,
-            loci,
+            round_id, current_reference, target_species, loci,
         )
 
     finalize_round_outputs(workdir, round_id)
