@@ -102,6 +102,10 @@ def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
     if not in_path.exists():
         raise FileNotFoundError(f"Protein FASTA not found: {in_fa}")
 
+    marker = Path(str(out_path) + ".sanitized")
+    if marker.exists():
+        return str(out_path)
+    
     tmp_tag = uuid.uuid4().hex
     tmp_path = out_path.with_name(out_path.name + f".sanitize.{tmp_tag}.tmp")
 
@@ -118,6 +122,7 @@ def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
                 fout.write(seq + "\n")
 
     tmp_path.replace(out_path)
+    marker.write_text("ok\n")
     return str(out_path)
 
 def prepare_species_sequences(
