@@ -596,7 +596,7 @@ def annotate_missing_loci_and_choose_next(
                         "n_source_exons": len(seed.exons),
                     })
 
-                        pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
 
             projected_block_rows = []
             for exon_idx2, exon_intervals in enumerate(projected_exon_blocks, start=1):
