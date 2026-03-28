@@ -37,33 +37,23 @@ def export_species_genome_from_hal(
     species: str,
     out_fasta: str,
 ) -> str:
-    """
-    Export one species genome from HAL to FASTA.
-    """
     out = Path(out_fasta)
     _safe_mkdir(out.parent)
 
     if out.exists() and out.stat().st_size > 0:
         return str(out)
 
-    _run(
-        [
-            "hal2fasta",
-            hal_path,
-            species,
-            "--outFaPath",
-            str(out),
-        ]
-    )
+    _run([
+        "hal2fasta",
+        hal_path,
+        species,
+        "--outFaPath",
+        str(out),
+    ])
     return str(out)
 
 
 def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, str]:
-    """
-    Extract mRNA, CDS, and protein FASTA with gffread.
-
-    Missing outputs are replaced by empty files so downstream code can proceed.
-    """
     prefix_path = Path(prefix)
     _safe_mkdir(prefix_path.parent)
 
@@ -76,7 +66,7 @@ def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, s
     cds_tmp = Path(f"{prefix}.cds.fa.{tmp_tag}.tmp")
     aa_tmp = Path(f"{prefix}.aa.fa.{tmp_tag}.tmp")
 
-    cmd = [
+    _run([
         "gffread",
         gff_path,
         "-g",
@@ -87,8 +77,7 @@ def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, s
         str(cds_tmp),
         "-y",
         str(aa_tmp),
-    ]
-    _run(cmd)
+    ])
 
     for tmp in (mrna_tmp, cds_tmp, aa_tmp):
         if not tmp.exists():
@@ -102,9 +91,6 @@ def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, s
 
 
 def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
-    """
-    Replace DIAMOND-invalid amino-acid symbols with X.
-    """
     in_path = Path(in_fa)
     out_path = Path(out_fa) if out_fa is not None else in_path
     tmp_path = out_path.with_suffix(out_path.suffix + ".sanitize.tmp")
@@ -130,12 +116,6 @@ def prepare_species_sequences(
     hal_path: str,
     annotation_paths: dict[str, str],
 ) -> dict[str, dict[str, str | bool | None]]:
-    """
-    For each species:
-    - export genome FASTA from HAL
-    - if annotation exists, derive mRNA/CDS/AA FASTA with gffread
-    - sanitize AA FASTA for DIAMOND
-    """
     workdir_p = Path(workdir)
     cache_dir = workdir_p / "sequence_cache"
     _safe_mkdir(cache_dir)
@@ -202,9 +182,6 @@ def prepare_diamond_inputs(
     target_species: str,
     sequences_by_species: dict[str, dict[str, str | bool | None]],
 ) -> tuple[str, str]:
-    """
-    Return (query_fa, target_fa) for one source->target DIAMOND run.
-    """
     source = sequences_by_species.get(source_species)
     target = sequences_by_species.get(target_species)
 
@@ -234,9 +211,6 @@ def run_diamond(
     evalue: float = 1e-5,
     threads: int = 1,
 ) -> str:
-    """
-    Run DIAMOND blastp of query proteins against target proteins.
-    """
     out_tsv_p = Path(out_tsv)
     db_prefix = Path(f"{tmp_prefix}.dmnd")
 
@@ -247,16 +221,14 @@ def run_diamond(
     sanitize_protein_fasta(query_fa)
 
     if not db_prefix.exists():
-        _run(
-            [
-                "diamond",
-                "makedb",
-                "--in",
-                str(target_fa),
-                "--db",
-                str(db_prefix),
-            ]
-        )
+        _run([
+            "diamond",
+            "makedb",
+            "--in",
+            str(target_fa),
+            "--db",
+            str(db_prefix),
+        ])
 
     cmd = [
         "diamond",
@@ -291,10 +263,6 @@ def run_diamond(
 
 
 def load_diamond_results(path: str) -> dict[tuple[str, str], dict]:
-    """
-    Read DIAMOND outfmt 6 into:
-      {(qseqid, sseqid): {"pid": ..., "aln_len": ..., "bitscore": ..., "evalue": ...}}
-    """
     results: dict[tuple[str, str], dict] = {}
     p = Path(path)
 
