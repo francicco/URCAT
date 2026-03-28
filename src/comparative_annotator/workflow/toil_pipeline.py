@@ -555,6 +555,7 @@ def annotate_missing_loci_and_choose_next(
         for payload in payloads:
             source_species = payload["source_species"]
             source_tx_id = payload["source_transcript"]
+            accepted_fragmented_source_ids = set()
 
             if source_tx_id not in transcripts_by_species.get(source_species, {}):
                 skipped_missing_payloads.append({
@@ -618,6 +619,8 @@ def annotate_missing_loci_and_choose_next(
             is_failed = not pts
             is_partial = any(exon_recovery(tx) < 0.8 for tx in pts)
 
+            keep_for_consensus = True
+
             if is_failed or is_partial:
                 candidate = build_fragmented_candidate(
                     source_species=seed.species,
@@ -640,7 +643,19 @@ def annotate_missing_loci_and_choose_next(
 
                     fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
 
-            projected_transcripts.extend(pts)
+                    if candidate.fragment_class in {
+                        "split_fragment_high_confidence",
+                        "split_fragment_structural",
+                        "split_fragment_ambiguous",
+                        "partial_fragment_supported",
+                    }:
+                        accepted_fragmented_source_ids.add(seed.transcript_id)
+
+            if keep_for_consensus:
+                projected_transcripts.extend(pts)
+                        
+            if seed.transcript_id not in accepted_fragmented_source_ids:
+                projected_transcripts.extend(pts)
 
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
