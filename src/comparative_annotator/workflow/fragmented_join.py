@@ -153,7 +153,8 @@ def build_fragmented_candidate(
         return None
 
     print("FRAGACCEPT", source_transcript, target_species)
-
+    candidate = _populate_consecutive_metrics(candidate)
+    
     return FragmentedComparativeLocus(
         source_species=source_species,
         source_transcript=source_transcript,
