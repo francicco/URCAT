@@ -153,9 +153,8 @@ def build_fragmented_candidate(
         return None
 
     print("FRAGACCEPT", source_transcript, target_species)
-    candidate = _populate_consecutive_metrics(candidate)
-    
-    return FragmentedComparativeLocus(
+
+    candidate = FragmentedComparativeLocus(
         source_species=source_species,
         source_transcript=source_transcript,
         target_species=target_species,
@@ -183,6 +182,8 @@ def build_fragmented_candidate(
         status="fragmented",
     )
 
+    candidate = _populate_consecutive_metrics(candidate)
+    return candidate
 
 def add_protein_support_to_candidate(
     candidate,
