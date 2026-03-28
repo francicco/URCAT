@@ -328,19 +328,24 @@ def classify_fragmented_candidate(
 def _max_consecutive_run(values: list[int]) -> int:
     if not values:
         return 0
-
-    values = sorted(set(values))
+    vals = sorted(set(values))
     best = 1
     cur = 1
-
-    for i in range(1, len(values)):
-        if values[i] == values[i - 1] + 1:
+    for i in range(1, len(vals)):
+        if vals[i] == vals[i - 1] + 1:
             cur += 1
             best = max(best, cur)
         else:
             cur = 1
-
     return best
+
+def _populate_consecutive_metrics(candidate):
+    recovered = list(candidate.recovered_exon_numbers or [])
+    max_run = _max_consecutive_run(recovered)
+    candidate.max_consecutive_recovered_exons = max_run
+    n_source = max(1, int(candidate.n_source_exons or 0))
+    candidate.consecutive_exon_fraction = max_run / n_source
+    return candidate
 
 
 def _safe_fraction(num: int, den: int) -> float:
