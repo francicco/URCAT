@@ -58,11 +58,17 @@ def _nonempty(path: str | Path | None) -> bool:
 def _safe_mkdir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
-
-def _run(cmd: list[str]) -> None:
-    subprocess.run(cmd, check=True)
-
-
+def _run(cmd: list[str], quiet: bool = True) -> None:
+    if quiet:
+        subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        subprocess.run(cmd, check=True)
+        
 def ensure_fasta_index(fasta_path: str) -> None:
     fasta = Path(fasta_path)
     fai = Path(str(fasta) + ".fai")
