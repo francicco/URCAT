@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 
 from comparative_annotator.models.fragmented_locus import (
@@ -11,7 +12,33 @@ from comparative_annotator.models.fragmented_locus import (
 def _mean(xs: list[float]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
 
+def _normalize_tx_id(x: str) -> str:
+    x = x.split()[0]
+    if x.startswith("transcript:"):
+        x = x[len("transcript:"):]
+    return x
 
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not intervals:
+        return []
+
+    intervals = sorted((min(a, b), max(a, b)) for a, b in intervals)
+    merged = [intervals[0]]
+
+    for start, end in intervals[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end + 1:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+
+    return merged
+
+
+def _intervals_total_length(intervals: list[tuple[int, int]]) -> int:
+    return sum((end - start + 1) for start, end in intervals)
+    
 def build_fragmented_candidate(
     *,
     source_species: str,
