@@ -329,6 +329,7 @@ def run_diamond(
         cmd = [
             "diamond",
             "blastp",
+            "--quiet",
             "--query",
             str(query_fa),
             "--db",
