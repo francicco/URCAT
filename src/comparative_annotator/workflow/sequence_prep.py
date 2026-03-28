@@ -311,6 +311,7 @@ def run_diamond(
                 [
                     "diamond",
                     "makedb",
+                    "--quiet",
                     "--in",
                     str(target_fa),
                     "--db",
