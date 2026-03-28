@@ -376,18 +376,20 @@ def load_diamond_results(path: str) -> dict[tuple[str, str], dict]:
                 continue
 
             fields = line.split("\t")
-            if len(fields) < 6:
+            if len(fields) < 8:
                 continue
 
-            qseqid, sseqid, pident, length, bitscore, evalue = fields[:6]
+            qseqid, sseqid, pident, length, qstart, qend, bitscore, evalue = fields[:8]
             key = (qseqid, sseqid)
 
             if key not in results:
                 results[key] = {
                     "pid": float(pident),
                     "aln_len": int(length),
+                    "qstart": int(qstart),
+                    "qend": int(qend),
                     "bitscore": float(bitscore),
                     "evalue": float(evalue),
-                }
+            }
 
     return results
