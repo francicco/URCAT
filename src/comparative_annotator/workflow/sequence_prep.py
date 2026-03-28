@@ -112,6 +112,7 @@ def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
             if line.startswith(">"):
                 fout.write(line)
             else:
+                if line.endswith("."): seq = line.strip().upper().replace(".", "")
                 seq = line.strip().upper().replace(".", "X")
                 seq = "".join(ch if ch in valid else "X" for ch in seq)
                 fout.write(seq + "\n")
