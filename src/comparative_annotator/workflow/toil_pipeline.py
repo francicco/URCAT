@@ -566,11 +566,10 @@ def annotate_missing_loci_and_choose_next(
     fragmented_candidates_by_species = {}
     skipped_missing_payloads = []
 
-    for target_species, payloads in missing_by_target.items():
+        for target_species, payloads in missing_by_target.items():
         projected_blocks_for_summary = []
         projected_transcripts_for_consensus = []
-        accepted_fragmented_source_ids = set()
-        
+
         for payload in payloads:
             source_species = payload["source_species"]
             source_tx_id = payload["source_transcript"]
@@ -656,7 +655,6 @@ def annotate_missing_loci_and_choose_next(
                         diamond_hits_for_source=diamond_cache.get((source_species, target_species), {}),
                         source_protein_length=_estimate_source_protein_length_from_transcript(seed),
                     )
-
                     candidate = classify_disrupted_projection_candidate(candidate)
 
                     fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
@@ -667,18 +665,22 @@ def annotate_missing_loci_and_choose_next(
                         "split_fragment_ambiguous",
                         "partial_fragment_supported",
                     }:
-                        accepted_fragmented_source_ids.add(seed.transcript_id)
+                        keep_for_consensus = False
 
             if keep_for_consensus:
-                projected_transcripts.extend(pts)
-                        
-            if seed.transcript_id not in accepted_fragmented_source_ids:
-                keep_for_consensus = True
+                projected_transcripts_for_consensus.extend(pts)
 
-         if projected_transcripts_for_consensus:
+        projected_transcripts_for_consensus = _dedup_projected_transcripts(
+            projected_transcripts_for_consensus
+        )
+
+        if projected_transcripts_for_consensus:
             clusters = cluster_projected_transcripts(projected_transcripts_for_consensus, max_gap=0)
             consensuses = [
-                build_consensus_missing_transcript(cluster, choose_missing_locus_strand(cluster)[0])
+                build_consensus_missing_transcript(
+                    cluster,
+                    choose_missing_locus_strand(cluster)[0],
+                )
                 for cluster in clusters
             ]
             consensuses = [c for c in consensuses if c is not None]
@@ -699,7 +701,7 @@ def annotate_missing_loci_and_choose_next(
             )
             for (src_sp, src_txs), blocks in grouped_fragmented.items()
         ]
-
+            
     updated_used = append_unique_preserve_order(used_reference_species, current_reference)
     orphan_loci_by_species = {}
     pending_frontiers_by_species = {}
