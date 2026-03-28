@@ -485,6 +485,24 @@ def annotate_missing_loci_and_choose_next(
     from comparative_annotator.workflow.fragmented_loci_table import write_fragmented_loci_table
     from comparative_annotator.workflow.fragmented_projection import summarize_projected_blocks
 
+    def _dedup_projected_transcripts(transcripts):
+        seen = set()
+        out = []
+        for tx in transcripts:
+            key = (
+                tx.seqid,
+                tx.start,
+                tx.end,
+                tx.strand,
+                getattr(tx, "source_transcript", None),
+                tuple(tx.exons),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(tx)
+        return out
+    
     species_list = cfg.species_list
     transcripts_by_species = load_all_transcripts(cfg.annotation_paths, species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
@@ -549,13 +567,13 @@ def annotate_missing_loci_and_choose_next(
     skipped_missing_payloads = []
 
     for target_species, payloads in missing_by_target.items():
-        projected_transcripts = []
         projected_blocks_for_summary = []
-
+        projected_transcripts_for_consensus = []
+        accepted_fragmented_source_ids = set()
+        
         for payload in payloads:
             source_species = payload["source_species"]
             source_tx_id = payload["source_transcript"]
-            accepted_fragmented_source_ids = set()
 
             if source_tx_id not in transcripts_by_species.get(source_species, {}):
                 skipped_missing_payloads.append({
@@ -655,10 +673,10 @@ def annotate_missing_loci_and_choose_next(
                 projected_transcripts.extend(pts)
                         
             if seed.transcript_id not in accepted_fragmented_source_ids:
-                projected_transcripts.extend(pts)
+                keep_for_consensus = True
 
-        if projected_transcripts:
-            clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
+         if projected_transcripts_for_consensus:
+            clusters = cluster_projected_transcripts(projected_transcripts_for_consensus, max_gap=0)
             consensuses = [
                 build_consensus_missing_transcript(cluster, choose_missing_locus_strand(cluster)[0])
                 for cluster in clusters
