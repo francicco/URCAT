@@ -91,9 +91,19 @@ def run_gffread(gff_path: str, genome_fa: str, prefix: str) -> tuple[str, str, s
 
 
 def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
+    """
+    Replace DIAMOND-invalid amino-acid symbols with X.
+
+    Safe under parallel execution by using a unique temporary file.
+    """
     in_path = Path(in_fa)
     out_path = Path(out_fa) if out_fa is not None else in_path
-    tmp_path = out_path.with_suffix(out_path.suffix + ".sanitize.tmp")
+
+    if not in_path.exists():
+        raise FileNotFoundError(f"Protein FASTA not found: {in_fa}")
+
+    tmp_tag = uuid.uuid4().hex
+    tmp_path = out_path.with_name(out_path.name + f".sanitize.{tmp_tag}.tmp")
 
     valid = set("ACDEFGHIKLMNPQRSTVWYBXZJUO*")
 
@@ -108,7 +118,6 @@ def sanitize_protein_fasta(in_fa: str, out_fa: str | None = None) -> str:
 
     tmp_path.replace(out_path)
     return str(out_path)
-
 
 def prepare_species_sequences(
     workdir: str,
