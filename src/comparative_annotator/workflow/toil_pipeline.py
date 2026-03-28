@@ -21,7 +21,11 @@ from comparative_annotator.missing.consensus import (
     choose_missing_locus_strand,
     cluster_projected_transcripts,
 )
-from comparative_annotator.workflow.fragmented_join import build_fragmented_candidate
+from comparative_annotator.workflow.fragmented_join import (
+    build_fragmented_candidate,
+    add_protein_support_to_candidate,
+    classify_disrupted_projection_candidate,
+)
 from comparative_annotator.pipeline.infer_locus import infer_comparative_locus
 from comparative_annotator.projection.reconstruct import reconstruct_projected_transcripts
 from comparative_annotator.workflow.progressive import (
@@ -239,27 +243,15 @@ def write_round_summary(job, workdir, round_merged_path, decision_path):
 # ---------------------------------------------------------------------------
 
 def _run_target_edge_evidence_impl(workdir: str, cfg: URCATConfig, merged_target_path: str) -> str:
-    import comparative_annotator.workflow.orthology_edges as oe
-    _orig = oe.load_all_transcripts
+    from comparative_annotator.workflow.orthology_edges import build_target_edge_evidence
 
-    def _patched(annotation_dir, annotation_suffix, species_list):
-        return load_all_transcripts(cfg.annotation_paths, species_list)
-
-    oe.load_all_transcripts = _patched
-    try:
-        edge_json_path = oe.build_target_edge_evidence(
-            workdir=workdir,
-            annotation_dir="",
-            annotation_suffix="",
-            hal_path=cfg.hal_path,
-            species_csv=",".join(cfg.species_list),
-            merged_target_path=merged_target_path,
-        )
-    finally:
-        oe.load_all_transcripts = _orig
-
-    return edge_json_path
-
+    return build_target_edge_evidence(
+        workdir=workdir,
+        annotation_paths=cfg.annotation_paths,
+        hal_path=cfg.hal_path,
+        species_list=cfg.species_list,
+        merged_target_path=merged_target_path,
+    )
 
 # ---------------------------------------------------------------------------
 # Toil job functions
@@ -498,6 +490,55 @@ def annotate_missing_loci_and_choose_next(
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
 
+        from comparative_annotator.workflow.sequence_prep import (
+        load_all_species_sequences,
+        prepare_diamond_inputs,
+        run_diamond,
+        load_diamond_results,
+    )
+
+    sequence_cache = load_all_species_sequences(
+        workdir=workdir,
+        species_list=species_list,
+        hal_path=cfg.hal_path,
+        annotation_paths=cfg.annotation_paths,
+    )
+
+    diamond_cache_dir = Path(workdir) / "diamond_cache"
+    diamond_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    diamond_cache = {}
+    for source_species in species_list:
+        for target_species2 in species_list:
+            if source_species == target_species2:
+                continue
+
+            source_info = sequence_cache.get(source_species, {})
+            target_info = sequence_cache.get(target_species2, {})
+
+            if not source_info.get("aa_fa") or not target_info.get("aa_fa"):
+                diamond_cache[(source_species, target_species2)] = {}
+                continue
+
+            out_tsv = diamond_cache_dir / f"{source_species}_vs_{target_species2}.tsv"
+            tmp_prefix = str(diamond_cache_dir / f"{source_species}_vs_{target_species2}")
+
+            run_diamond(
+                query_fa=str(source_info["aa_fa"]),
+                target_fa=str(target_info["aa_fa"]),
+                out_tsv=str(out_tsv),
+                tmp_prefix=tmp_prefix,
+                threads=1,
+            )
+
+            diamond_cache[(source_species, target_species2)] = load_diamond_results(str(out_tsv))
+
+    def _estimate_source_protein_length_from_transcript(tx) -> int:
+        cds_len = 0
+        for start, end in tx.exons:
+            cds_len += abs(end - start) + 1
+        return max(1, cds_len // 3)
+
     round_merged = read_json(round_merged_path)
     missing_by_target = extract_missing_locus_payloads(round_merged)
     explained_locus_ids_by_species = collect_explained_locus_ids_from_round(round_merged)
@@ -555,35 +596,52 @@ def annotate_missing_loci_and_choose_next(
                         "n_source_exons": len(seed.exons),
                     })
 
-            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+                        pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+
+            projected_block_rows = []
+            for exon_idx2, exon_intervals in enumerate(projected_exon_blocks, start=1):
+                for iv in exon_intervals:
+                    projected_block_rows.append(
+                        {
+                            "source_exon_number": exon_idx2,
+                            "target_seqid": iv.seqid,
+                            "target_start": iv.start,
+                            "target_end": iv.end,
+                            "target_strand": iv.strand,
+                            "chain_score": getattr(iv, "chain_score", None),
+                        }
+                    )
+
+            def exon_recovery(tx):
+                return len(tx.exons) / max(1, len(seed.exons))
+
+            is_failed = not pts
+            is_partial = any(exon_recovery(tx) < 0.8 for tx in pts)
+
+            if is_failed or is_partial:
+                candidate = build_fragmented_candidate(
+                    source_species=seed.species,
+                    source_transcript=seed.transcript_id,
+                    target_species=target_species,
+                    source_seqid=seed.seqid,
+                    source_strand=seed.strand,
+                    n_source_exons=len(seed.exons),
+                    projected_blocks=projected_block_rows,
+                )
+
+                if candidate is not None:
+                    candidate = add_protein_support_to_candidate(
+                        candidate,
+                        diamond_hits_for_source=diamond_cache.get((source_species, target_species), {}),
+                        source_protein_length=_estimate_source_protein_length_from_transcript(seed),
+                    )
+
+                    candidate = classify_disrupted_projection_candidate(candidate)
+
+                    fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
+
             projected_transcripts.extend(pts)
 
-        grouped_blocks = {}
-        for row in projected_blocks_for_summary:
-            key = (
-                row["source_species"],
-                row["source_transcript"],
-                row["target_species"],
-            )
-            grouped_blocks.setdefault(key, []).append(row)
-
-        fragmented_candidates = []
-        for (src_species, src_tx, tgt_species), blocks in grouped_blocks.items():
-            first = blocks[0]
-            candidate = build_fragmented_candidate(
-                source_species=src_species,
-                source_transcript=src_tx,
-                target_species=tgt_species,
-                source_seqid=first["source_seqid"],
-                source_strand=first["source_strand"],
-                n_source_exons=first["n_source_exons"],
-                projected_blocks=blocks,
-            )
-            if candidate is not None:
-                fragmented_candidates.append(candidate)
-
-        fragmented_candidates_by_species[target_species] = fragmented_candidates
-        
         if projected_transcripts:
             clusters = cluster_projected_transcripts(projected_transcripts, max_gap=0)
             consensuses = [
@@ -902,3 +960,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
