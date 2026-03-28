@@ -32,7 +32,7 @@ def _parse_attributes(attr_str: str) -> dict[str, str]:
     return attrs
 
 
-def _parse_gff_line(line: str) -> dict:
+def _parse_gff_line(line: str, rec_index: int) -> dict:
     parts = line.split("\t")
     if len(parts) != 9:
         raise ValueError(f"Invalid GFF3 line with {len(parts)} columns: {line}")
@@ -41,6 +41,7 @@ def _parse_gff_line(line: str) -> dict:
 
     return {
         "line": line,
+        "index": rec_index,
         "seqid": parts[0],
         "source": parts[1],
         "type": parts[2],
@@ -89,28 +90,22 @@ def _transcript_child_sort_key(rec: dict):
     type_rank = {"exon": 0, "CDS": 1}.get(rec["type"], 2)
 
     if strand == "-":
-        return (-start, -end, type_rank, rec["line"])
-    return (start, end, type_rank, rec["line"])
+        return (-start, -end, type_rank, rec["index"])
+    return (start, end, type_rank, rec["index"])
 
 
 def _record_group_sort_key(rec: dict):
-    """
-    Sort genes / orphan transcripts / orphan features at top level.
-    """
     return (
         rec["seqid"],
         rec["start"],
         rec["end"],
         _feature_type_rank(rec["type"]),
         rec["id"] or "",
-        rec["line"],
+        rec["index"],
     )
 
 
 def _transcript_sort_key(tx_rec: dict, children: list[dict]):
-    """
-    Sort transcripts under a gene in genomic order.
-    """
     if children:
         child_starts = [c["start"] for c in children]
         child_ends = [c["end"] for c in children]
@@ -122,8 +117,8 @@ def _transcript_sort_key(tx_rec: dict, children: list[dict]):
 
     strand = tx_rec.get("strand", ".")
     if strand == "-":
-        return (tx_rec["seqid"], -tx_end, -tx_start, tx_rec["id"] or "", tx_rec["line"])
-    return (tx_rec["seqid"], tx_start, tx_end, tx_rec["id"] or "", tx_rec["line"])
+        return (tx_rec["seqid"], -tx_end, -tx_start, tx_rec["id"] or "", tx_rec["index"])
+    return (tx_rec["seqid"], tx_start, tx_end, tx_rec["id"] or "", tx_rec["index"])
 
 
 def _emit_transcript_block(tx_rec: dict, child_recs: list[dict]) -> list[str]:
@@ -135,10 +130,9 @@ def _emit_transcript_block(tx_rec: dict, child_recs: list[dict]) -> list[str]:
       exon
       CDS
       ...
-    preserving transcript order.
 
     Any non-exon/CDS children are emitted after the transcript and before the
-    exon/CDS block stream, sorted in transcript order.
+    exon/CDS stream.
     """
     out = [tx_rec["line"]]
 
@@ -156,35 +150,31 @@ def _emit_transcript_block(tx_rec: dict, child_recs: list[dict]) -> list[str]:
     for cds in cds_recs:
         cds_by_exact_coords[(cds["start"], cds["end"])].append(cds)
 
-    used_cds_ids: set[str] = set()
+    used_cds_indices: set[int] = set()
 
     for exon in exon_recs:
         out.append(exon["line"])
 
         exact = cds_by_exact_coords.get((exon["start"], exon["end"]), [])
-        exact = [c for c in exact if c["id"] not in used_cds_ids]
+        exact = [c for c in exact if c["index"] not in used_cds_indices]
         if exact:
             for cds in exact:
                 out.append(cds["line"])
-                if cds["id"] is not None:
-                    used_cds_ids.add(cds["id"])
+                used_cds_indices.add(cds["index"])
             continue
 
-        # Fallback: emit CDS blocks contained within this exon
         nested = [
             cds for cds in cds_recs
-            if cds["id"] not in used_cds_ids
+            if cds["index"] not in used_cds_indices
             and cds["start"] >= exon["start"]
             and cds["end"] <= exon["end"]
         ]
         nested = sorted(nested, key=_transcript_child_sort_key)
         for cds in nested:
             out.append(cds["line"])
-            if cds["id"] is not None:
-                used_cds_ids.add(cds["id"])
+            used_cds_indices.add(cds["index"])
 
-    # Emit any CDS not already emitted, in transcript order
-    remaining_cds = [cds for cds in cds_recs if cds["id"] not in used_cds_ids]
+    remaining_cds = [cds for cds in cds_recs if cds["index"] not in used_cds_indices]
     remaining_cds = sorted(remaining_cds, key=_transcript_child_sort_key)
     out.extend(r["line"] for r in remaining_cds)
 
@@ -192,19 +182,7 @@ def _emit_transcript_block(tx_rec: dict, child_recs: list[dict]) -> list[str]:
 
 
 def _order_gff_lines(lines: list[str]) -> list[str]:
-    """
-    Reorder lines hierarchically:
-      gene
-        transcript/mRNA
-          exon
-          CDS
-          exon
-          CDS
-      ...
-
-    Falls back gracefully for orphan records.
-    """
-    records = [_parse_gff_line(line) for line in lines]
+    records = [_parse_gff_line(line, i) for i, line in enumerate(lines)]
 
     by_id: dict[str, dict] = {}
     for rec in records:
@@ -291,8 +269,7 @@ def write_final_species_gff3s(
       CDS
       ...
 
-    Exon/CDS order follows transcript order, including proper ordering for
-    minus-strand transcripts.
+    Exon/CDS order follows transcript order, including minus-strand transcripts.
     """
     out_dir = Path(output_dir) / "final_gff3"
     out_dir.mkdir(parents=True, exist_ok=True)
