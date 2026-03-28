@@ -238,10 +238,10 @@ def add_protein_support_to_candidate(
         qstart = hit.get("qstart")
         qend = hit.get("qend")
         if qstart is not None and qend is not None:
-            query_intervals.append((int(qstart), int(qend))) / 100.0
+            query_intervals.append((int(qstart), int(qend)))
 
     if pidents:
-        candidate.aa_identity_mean = sum(pidents) / len(pidents)
+        candidate.aa_identity_mean = sum(pidents) / len(pidents) / 100.0
 
     if bitscores:
         candidate.aa_bitscore = max(bitscores)
