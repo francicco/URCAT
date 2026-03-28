@@ -490,7 +490,7 @@ def annotate_missing_loci_and_choose_next(
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
 
-        from comparative_annotator.workflow.sequence_prep import (
+    from comparative_annotator.workflow.sequence_prep import (
         load_all_species_sequences,
         prepare_diamond_inputs,
         run_diamond,
