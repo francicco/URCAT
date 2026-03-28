@@ -566,7 +566,7 @@ def annotate_missing_loci_and_choose_next(
     fragmented_candidates_by_species = {}
     skipped_missing_payloads = []
 
-        for target_species, payloads in missing_by_target.items():
+    for target_species, payloads in missing_by_target.items():
         projected_blocks_for_summary = []
         projected_transcripts_for_consensus = []
 
