@@ -992,6 +992,14 @@ def main():
         species_list=cfg.species_list,
     )
 
+    from comparative_annotator.workflow.final_summary import write_final_summary_tsv
+
+    write_final_summary_tsv(
+        output_dir=output_dir,
+        annotation_paths=cfg.annotation_paths,
+        species_list=cfg.species_list,
+    )
+
 
 if __name__ == "__main__":
     main()
