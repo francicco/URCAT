@@ -34,8 +34,10 @@ class CodingIntegrityReport:
     internal_stop_count: int | None
     length_mod_3: int | None
     is_in_frame: bool | None
-    classification_hint: str
-
+    phase_series: list[int] = field(default_factory=list)
+    source_cds_length_nt: int | None = None
+    target_cds_interval_count: int = 0
+    classification_hint: str = "unknown"
 
 @dataclass
 class AssemblyFragmentationReport:
