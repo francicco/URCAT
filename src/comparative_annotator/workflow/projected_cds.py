@@ -9,16 +9,28 @@ START_CODONS = {"ATG"}
 
 
 @dataclass
+class ProjectedCDSBlock:
+    source_start: int
+    source_end: int
+    target_seqid: str
+    target_start: int
+    target_end: int
+    target_strand: str | None
+
+
+@dataclass
 class ProjectedCDSModel:
     source_species: str
     source_transcript_id: str
     target_species: str
-    target_gene_id: str
-    target_transcript_id: str
+    target_gene_id: str | None
+    target_transcript_id: str | None
     seqid: str | None
     strand: str | None
-    exon_intervals: list[tuple[int, int]] = field(default_factory=list)
-    cds_intervals: list[tuple[int, int]] = field(default_factory=list)
+    projected_exon_intervals: list[tuple[int, int]] = field(default_factory=list)
+    projected_cds_intervals: list[tuple[int, int]] = field(default_factory=list)
+    all_projected_cds_blocks: list[ProjectedCDSBlock] = field(default_factory=list)
+    projected_seqids: list[str] = field(default_factory=list)
     source_cds_length_nt: int | None = None
     target_cds_sequence: str | None = None
     source_cds_sequence: str | None = None
@@ -39,6 +51,7 @@ class CodingIntegrityReport:
     target_cds_interval_count: int = 0
     classification_hint: str = "unknown"
 
+
 @dataclass
 class AssemblyFragmentationReport:
     is_fragmented_across_seqids: bool
@@ -55,6 +68,24 @@ class ProjectedLocusAssessment:
     final_reason: str
 
 
+@dataclass
+class TranscriptProjectionLike:
+    """
+    Minimal structural interface expected from reconstruct_projected_transcripts().
+    """
+
+    source_species: str
+    source_transcript: str
+    target_species: str
+    seqid: str
+    strand: str
+    exons: list[tuple[int, int]]
+
+
+# ---------------------------------------------------------------------------
+# Basic sequence helpers
+# ---------------------------------------------------------------------------
+
 def reverse_complement(seq: str) -> str:
     table = str.maketrans("ACGTNacgtn", "TGCANtgcan")
     return seq.translate(table)[::-1]
@@ -66,28 +97,41 @@ def normalize_seq(seq: str | None) -> str | None:
     return "".join(seq.split()).upper()
 
 
-def sort_intervals(intervals: list[tuple[int, int]], strand: str | None = None) -> list[tuple[int, int]]:
-    if strand == "-":
-        return sorted(intervals, key=lambda x: (x[0], x[1]), reverse=False)
-    return sorted(intervals, key=lambda x: (x[0], x[1]))
+def interval_length(start: int, end: int) -> int:
+    return abs(end - start) + 1
+
+
+def normalize_interval(start: int, end: int) -> tuple[int, int]:
+    return (start, end) if start <= end else (end, start)
+
+
+def sum_interval_lengths(intervals: list[tuple[int, int]]) -> int:
+    return sum(interval_length(s, e) for s, e in intervals)
+
+
+def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not intervals:
+        return []
+
+    ordered = sorted(normalize_interval(s, e) for s, e in intervals)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end + 1:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def cds_intervals_in_transcript_order(
     intervals: list[tuple[int, int]],
     strand: str | None,
 ) -> list[tuple[int, int]]:
-    intervals = sorted(intervals, key=lambda x: (x[0], x[1]))
+    ordered = sorted(normalize_interval(s, e) for s, e in intervals)
     if strand == "-":
-        return list(reversed(intervals))
-    return intervals
-
-
-def interval_length(start: int, end: int) -> int:
-    return end - start + 1
-
-
-def sum_interval_lengths(intervals: list[tuple[int, int]]) -> int:
-    return sum(interval_length(s, e) for s, e in intervals)
+        return list(reversed(ordered))
+    return ordered
 
 
 def extract_subsequence(
@@ -96,6 +140,7 @@ def extract_subsequence(
     start: int,
     end: int,
 ) -> str:
+    start, end = normalize_interval(start, end)
     seq = genome_by_seqid[seqid]
     return seq[start - 1:end]
 
@@ -112,6 +157,10 @@ def extract_spliced_sequence(
         seq = reverse_complement(seq)
     return normalize_seq(seq) or ""
 
+
+# ---------------------------------------------------------------------------
+# Translation helpers
+# ---------------------------------------------------------------------------
 
 def translate_cds(seq: str) -> str:
     seq = normalize_seq(seq) or ""
@@ -133,67 +182,67 @@ def translate_cds(seq: str) -> str:
         "GAT": "D", "GAC": "D", "GAA": "E", "GAG": "E",
         "GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
     }
-    aa = []
+    aa: list[str] = []
     for i in range(0, len(seq) - 2, 3):
-        codon = seq[i:i + 3]
-        aa.append(codon_table.get(codon, "X"))
+        aa.append(codon_table.get(seq[i:i + 3], "X"))
     return "".join(aa)
 
 
 def count_internal_stops(aa: str) -> int:
     if not aa:
         return 0
-    if aa.endswith("*"):
-        aa = aa[:-1]
-    return aa.count("*")
+    body = aa[:-1] if aa.endswith("*") else aa
+    return body.count("*")
 
 
 def cds_phase_series(intervals: list[tuple[int, int]], strand: str | None) -> list[int]:
     ordered = cds_intervals_in_transcript_order(intervals, strand)
-    phases_in_tx_order = []
+    phases_tx_order: list[int] = []
     consumed = 0
     for start, end in ordered:
-        phase = (3 - (consumed % 3)) % 3
-        if consumed == 0:
-            phase = 0
-        phases_in_tx_order.append(phase)
+        phase = 0 if consumed == 0 else (3 - (consumed % 3)) % 3
+        phases_tx_order.append(phase)
         consumed += interval_length(start, end)
-
     if strand == "-":
-        phases_in_genomic_order = list(reversed(phases_in_tx_order))
-    else:
-        phases_in_genomic_order = phases_in_tx_order
-    return phases_in_genomic_order
+        return list(reversed(phases_tx_order))
+    return phases_tx_order
+
+
+# ---------------------------------------------------------------------------
+# Transcript attribute readers
+# ---------------------------------------------------------------------------
+
+def _coerce_interval_list(value: Any) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    if not value:
+        return out
+    for item in value:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            out.append(normalize_interval(int(item[0]), int(item[1])))
+    return sorted(out)
 
 
 def get_transcript_cds_intervals(tx: Any) -> list[tuple[int, int]]:
-    """
-    Tries several common attribute names.
-    """
     for attr in ("cds_parts", "cds_intervals", "cds", "CDS", "cds_blocks"):
         value = getattr(tx, attr, None)
-        if value:
-            out = []
-            for item in value:
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    out.append((int(item[0]), int(item[1])))
-            if out:
-                return sorted(out, key=lambda x: (x[0], x[1]))
+        out = _coerce_interval_list(value)
+        if out:
+            return out
     return []
 
 
 def get_transcript_exon_intervals(tx: Any) -> list[tuple[int, int]]:
     for attr in ("exons", "exon_intervals", "exon_blocks"):
         value = getattr(tx, attr, None)
-        if value:
-            out = []
-            for item in value:
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    out.append((int(item[0]), int(item[1])))
-            if out:
-                return sorted(out, key=lambda x: (x[0], x[1]))
+        out = _coerce_interval_list(value)
+        if out:
+            return out
     return []
 
+
+# ---------------------------------------------------------------------------
+# Projection helpers
+# ---------------------------------------------------------------------------
 
 def project_intervals_with_hal(
     hal: Any,
@@ -203,24 +252,8 @@ def project_intervals_with_hal(
     source_strand: str,
     intervals: list[tuple[int, int]],
     source_transcript_id: str | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Returns one flattened record per projected block.
-    Expected HALAdapter API:
-      hal.project_interval(
-          source_species=...,
-          target_species=...,
-          seqid=...,
-          start=...,
-          end=...,
-          strand=...,
-          source_transcript=...
-      )
-
-    Each returned interval is expected to provide at least:
-      seqid, start, end, strand
-    """
-    out = []
+) -> list[ProjectedCDSBlock]:
+    out: list[ProjectedCDSBlock] = []
     for source_start, source_end in intervals:
         hits = hal.project_interval(
             source_species=source_species,
@@ -232,84 +265,120 @@ def project_intervals_with_hal(
             source_transcript=source_transcript_id,
         )
         for h in hits:
-            # h is a ProjectionInterval dataclass — use attribute access
             out.append(
-                {
-                    "source_start": source_start,
-                    "source_end": source_end,
-                    "target_seqid": h.seqid,
-                    "target_start": int(h.start),
-                    "target_end": int(h.end),
-                    "target_strand": h.strand if h.strand is not None else source_strand,
-                }
+                ProjectedCDSBlock(
+                    source_start=int(source_start),
+                    source_end=int(source_end),
+                    target_seqid=h.seqid,
+                    target_start=int(h.start),
+                    target_end=int(h.end),
+                    target_strand=h.strand if h.strand is not None else source_strand,
+                )
             )
     return out
 
 
-def collapse_projected_blocks(
-    projected_blocks: list[dict[str, Any]],
-) -> tuple[str | None, str | None, list[tuple[int, int]], list[str]]:
+def _dominant_seqid_from_blocks(blocks: list[ProjectedCDSBlock]) -> str | None:
+    if not blocks:
+        return None
+    support: dict[str, int] = {}
+    for b in blocks:
+        support[b.target_seqid] = support.get(b.target_seqid, 0) + interval_length(b.target_start, b.target_end)
+    return sorted(support.items(), key=lambda x: (-x[1], x[0]))[0][0]
+
+
+def _dominant_strand_from_blocks(blocks: list[ProjectedCDSBlock], default: str | None = None) -> str | None:
+    if not blocks:
+        return default
+    support: dict[str, int] = {}
+    for b in blocks:
+        strand = b.target_strand or default or "."
+        support[strand] = support.get(strand, 0) + 1
+    return sorted(support.items(), key=lambda x: (-x[1], x[0]))[0][0]
+
+
+def restrict_blocks_to_projected_transcript(
+    projected_cds_blocks: list[ProjectedCDSBlock],
+    projected_tx: TranscriptProjectionLike | None,
+) -> tuple[list[ProjectedCDSBlock], list[str]]:
     """
-    Conservative rule:
-    - if projected blocks land on multiple target seqids, keep all intervals but flag fragmentation
-    - choose dominant seqid by total projected bp
-    - choose dominant strand by support count
+    Keep only CDS blocks that are compatible with the accepted projected transcript.
+
+    Rules:
+    - if projected_tx is absent, fall back to dominant-seqid blocks
+    - otherwise require same seqid and strand as projected_tx
+    - then keep only CDS blocks that overlap at least one projected exon
     """
-    if not projected_blocks:
-        return None, None, [], []
+    if not projected_cds_blocks:
+        return [], []
 
-    seqid_bp: dict[str, int] = {}
-    strand_n: dict[str, int] = {}
+    all_seqids = sorted({b.target_seqid for b in projected_cds_blocks})
 
-    for b in projected_blocks:
-        seqid = b["target_seqid"]
-        strand = b["target_strand"]
-        bp = interval_length(b["target_start"], b["target_end"])
-        seqid_bp[seqid] = seqid_bp.get(seqid, 0) + bp
-        strand_n[strand] = strand_n.get(strand, 0) + 1
+    if projected_tx is None:
+        dominant_seqid = _dominant_seqid_from_blocks(projected_cds_blocks)
+        kept = [b for b in projected_cds_blocks if b.target_seqid == dominant_seqid]
+        return kept, all_seqids
 
-    dominant_seqid = sorted(seqid_bp.items(), key=lambda x: (-x[1], x[0]))[0][0]
-    dominant_strand = sorted(strand_n.items(), key=lambda x: (-x[1], x[0]))[0][0]
+    exon_intervals = [normalize_interval(s, e) for s, e in projected_tx.exons]
+    tx_seqid = projected_tx.seqid
+    tx_strand = projected_tx.strand
 
-    kept = [
-        (b["target_start"], b["target_end"])
-        for b in projected_blocks
-        if b["target_seqid"] == dominant_seqid
-    ]
-    kept = sorted(kept, key=lambda x: (x[0], x[1]))
+    kept: list[ProjectedCDSBlock] = []
+    for b in projected_cds_blocks:
+        if b.target_seqid != tx_seqid:
+            continue
+        if tx_strand is not None and b.target_strand is not None and b.target_strand != tx_strand:
+            continue
+        bs, be = normalize_interval(b.target_start, b.target_end)
+        overlaps_exon = any(not (be < es or bs > ee) for es, ee in exon_intervals)
+        if overlaps_exon:
+            kept.append(b)
+    return kept, all_seqids
 
-    all_seqids = sorted(seqid_bp.keys())
-    return dominant_seqid, dominant_strand, kept, all_seqids
 
+def collapse_blocks_to_intervals(blocks: list[ProjectedCDSBlock]) -> list[tuple[int, int]]:
+    return merge_intervals([(b.target_start, b.target_end) for b in blocks])
+
+
+# ---------------------------------------------------------------------------
+# Main model builder
+# ---------------------------------------------------------------------------
 
 def build_projected_cds_model(
     source_tx: Any,
-    target_species: str,
-    target_gene_id: str,
-    target_transcript_id: str,
+    projected_tx: TranscriptProjectionLike | None,
     hal: Any,
+    target_species: str,
+    target_gene_id: str | None = None,
+    target_transcript_id: str | None = None,
     target_genome_by_seqid: dict[str, str] | None = None,
     source_genome_by_seqid: dict[str, str] | None = None,
 ) -> ProjectedCDSModel:
     source_cds = get_transcript_cds_intervals(source_tx)
-    source_exons = get_transcript_exon_intervals(source_tx)
+    source_cds_len = sum_interval_lengths(source_cds) if source_cds else None
 
-    projected_cds_blocks = project_intervals_with_hal(
+    projected_blocks = project_intervals_with_hal(
         hal=hal,
         source_species=source_tx.species,
         target_species=target_species,
         source_seqid=source_tx.seqid,
         source_strand=source_tx.strand,
         intervals=source_cds,
-        source_transcript_id=source_tx.transcript_id,
+        source_transcript_id=getattr(source_tx, "transcript_id", None),
     )
 
-    target_seqid, target_strand, target_cds_intervals, _ = collapse_projected_blocks(projected_cds_blocks)
+    kept_blocks, all_seqids = restrict_blocks_to_projected_transcript(projected_blocks, projected_tx)
+    collapsed_cds = collapse_blocks_to_intervals(kept_blocks)
+
+    seqid = projected_tx.seqid if projected_tx is not None else _dominant_seqid_from_blocks(kept_blocks)
+    strand = projected_tx.strand if projected_tx is not None else _dominant_strand_from_blocks(kept_blocks, getattr(source_tx, "strand", None))
+
+    projected_exons: list[tuple[int, int]] = []
+    if projected_tx is not None:
+        projected_exons = [normalize_interval(s, e) for s, e in projected_tx.exons]
 
     source_cds_seq = None
-    target_cds_seq = None
-
-    if source_genome_by_seqid is not None and source_cds and source_tx.seqid in source_genome_by_seqid:
+    if source_genome_by_seqid is not None and source_cds and getattr(source_tx, "seqid", None) in source_genome_by_seqid:
         source_cds_seq = extract_spliced_sequence(
             genome_by_seqid=source_genome_by_seqid,
             seqid=source_tx.seqid,
@@ -317,34 +386,46 @@ def build_projected_cds_model(
             strand=source_tx.strand,
         )
 
-    if target_genome_by_seqid is not None and target_seqid is not None and target_cds_intervals:
-        if target_seqid in target_genome_by_seqid:
-            target_cds_seq = extract_spliced_sequence(
-                genome_by_seqid=target_genome_by_seqid,
-                seqid=target_seqid,
-                intervals=target_cds_intervals,
-                strand=target_strand,
-            )
+    target_cds_seq = None
+    if (
+        target_genome_by_seqid is not None
+        and seqid is not None
+        and collapsed_cds
+        and seqid in target_genome_by_seqid
+    ):
+        target_cds_seq = extract_spliced_sequence(
+            genome_by_seqid=target_genome_by_seqid,
+            seqid=seqid,
+            intervals=collapsed_cds,
+            strand=strand,
+        )
 
     return ProjectedCDSModel(
         source_species=source_tx.species,
-        source_transcript_id=source_tx.transcript_id,
+        source_transcript_id=getattr(source_tx, "transcript_id", getattr(source_tx, "source_transcript", "unknown")),
         target_species=target_species,
         target_gene_id=target_gene_id,
-        target_transcript_id=target_transcript_id,
-        seqid=target_seqid,
-        strand=target_strand,
-        exon_intervals=source_exons,
-        cds_intervals=target_cds_intervals,
-        source_cds_length_nt=sum_interval_lengths(source_cds) if source_cds else None,
+        target_transcript_id=target_transcript_id or getattr(projected_tx, "source_transcript", None),
+        seqid=seqid,
+        strand=strand,
+        projected_exon_intervals=projected_exons,
+        projected_cds_intervals=collapsed_cds,
+        all_projected_cds_blocks=kept_blocks,
+        projected_seqids=all_seqids,
+        source_cds_length_nt=source_cds_len,
         target_cds_sequence=target_cds_seq,
         source_cds_sequence=source_cds_seq,
     )
 
 
+# ---------------------------------------------------------------------------
+# Assessment
+# ---------------------------------------------------------------------------
+
 def compute_basic_coding_metrics(model: ProjectedCDSModel) -> CodingIntegrityReport:
     seq = normalize_seq(model.target_cds_sequence)
     src_len = model.source_cds_length_nt
+    phase_series = cds_phase_series(model.projected_cds_intervals, model.strand) if model.projected_cds_intervals else []
 
     if not seq:
         return CodingIntegrityReport(
@@ -356,12 +437,15 @@ def compute_basic_coding_metrics(model: ProjectedCDSModel) -> CodingIntegrityRep
             internal_stop_count=None,
             length_mod_3=None,
             is_in_frame=None,
+            phase_series=phase_series,
+            source_cds_length_nt=src_len,
+            target_cds_interval_count=len(model.projected_cds_intervals),
             classification_hint="missing_cds",
         )
 
     aa = translate_cds(seq)
     cds_len = len(seq)
-    cds_recovery = None if not src_len else cds_len / max(1, src_len)
+    cds_recovery = None if src_len is None else cds_len / max(1, src_len)
     has_start = seq[:3] in START_CODONS if len(seq) >= 3 else False
     has_stop = seq[-3:] in STOP_CODONS if len(seq) >= 3 else False
     internal_stops = count_internal_stops(aa)
@@ -392,20 +476,18 @@ def compute_basic_coding_metrics(model: ProjectedCDSModel) -> CodingIntegrityRep
         internal_stop_count=internal_stops,
         length_mod_3=mod3,
         is_in_frame=in_frame,
+        phase_series=phase_series,
+        source_cds_length_nt=src_len,
+        target_cds_interval_count=len(model.projected_cds_intervals),
         classification_hint=hint,
     )
 
 
-def detect_basic_fragmentation(model: ProjectedCDSModel, all_projected_seqids: list[str] | None = None) -> AssemblyFragmentationReport:
-    seqids = sorted(set(all_projected_seqids or ([] if model.seqid is None else [model.seqid])))
+def detect_basic_fragmentation(model: ProjectedCDSModel) -> AssemblyFragmentationReport:
+    seqids = sorted(set(model.projected_seqids))
     n_seqids = len(seqids)
     is_fragmented = n_seqids > 1
-
-    if is_fragmented:
-        hint = "multi_seqid_fragmentation"
-    else:
-        hint = "single_seqid"
-
+    hint = "multi_seqid_fragmentation" if is_fragmented else "single_seqid"
     return AssemblyFragmentationReport(
         is_fragmented_across_seqids=is_fragmented,
         n_seqids=n_seqids,
@@ -418,28 +500,19 @@ def classify_projected_locus(
     coding: CodingIntegrityReport,
     fragmentation: AssemblyFragmentationReport,
 ) -> tuple[str, str]:
-    """
-    First-pass labels, intentionally simple.
-
-    I   = intact
-    PI  = partially intact
-    UL  = uncertain/low-confidence
-    L   = likely lost/pseudogenic
-    AF  = assembly-fragmented
-    """
     if fragmentation.is_fragmented_across_seqids:
         if coding.cds_recovery is not None and coding.cds_recovery >= 0.7:
-            return "AF", "split across multiple target seqids but substantial CDS recovered"
-        return "AF", "split across multiple target seqids"
+            return "fragmented_cds", "split across multiple target seqids but substantial CDS recovered"
+        return "fragmented_cds", "split across multiple target seqids"
 
     if coding.classification_hint == "missing_cds":
-        return "L", "no projected CDS recovered"
+        return "lost_cds", "no projected CDS recovered"
 
     if coding.internal_stop_count and coding.internal_stop_count > 0:
-        return "L", "internal stop codons detected"
+        return "lost_cds", "internal stop codons detected"
 
     if coding.is_in_frame is False:
-        return "L", "CDS length not divisible by 3"
+        return "lost_cds", "CDS length not divisible by 3"
 
     if (
         coding.cds_recovery is not None
@@ -449,7 +522,7 @@ def classify_projected_locus(
         and coding.internal_stop_count == 0
         and coding.is_in_frame
     ):
-        return "I", "CDS appears intact"
+        return "intact_cds", "CDS appears intact"
 
     if (
         coding.cds_recovery is not None
@@ -457,17 +530,14 @@ def classify_projected_locus(
         and coding.internal_stop_count == 0
         and coding.is_in_frame
     ):
-        return "PI", "substantial CDS recovered without obvious coding-disrupting defects"
+        return "partial_cds", "substantial CDS recovered without obvious coding-disrupting defects"
 
-    return "UL", f"uncertain projection: {coding.classification_hint}"
+    return "uncertain_cds", f"uncertain projection: {coding.classification_hint}"
 
 
-def assess_projected_cds(
-    model: ProjectedCDSModel,
-    all_projected_seqids: list[str] | None = None,
-) -> ProjectedLocusAssessment:
+def assess_projected_cds(model: ProjectedCDSModel) -> ProjectedLocusAssessment:
     coding = compute_basic_coding_metrics(model)
-    fragmentation = detect_basic_fragmentation(model, all_projected_seqids=all_projected_seqids)
+    fragmentation = detect_basic_fragmentation(model)
     final_class, final_reason = classify_projected_locus(coding, fragmentation)
     return ProjectedLocusAssessment(
         coding=coding,
@@ -477,8 +547,12 @@ def assess_projected_cds(
     )
 
 
+# ---------------------------------------------------------------------------
+# GFF3 export helper
+# ---------------------------------------------------------------------------
+
 def gff3_attrs(attrs: dict[str, Any]) -> str:
-    parts = []
+    parts: list[str] = []
     for k, v in attrs.items():
         if v is None:
             continue
@@ -499,18 +573,18 @@ def projected_cds_to_gff3_lines(
     assessment: ProjectedLocusAssessment,
     source: str = "URCAT",
 ) -> list[str]:
-    if model.seqid is None or not model.cds_intervals:
+    if model.seqid is None or not model.projected_cds_intervals:
         return []
 
-    gene_id = model.target_gene_id
-    tx_id = model.target_transcript_id
+    gene_id = model.target_gene_id or (model.target_transcript_id or model.source_transcript_id)
+    tx_id = model.target_transcript_id or f"{gene_id}.1"
 
-    gene_start = min(s for s, _ in model.cds_intervals)
-    gene_end = max(e for _, e in model.cds_intervals)
+    transcript_span_intervals = model.projected_exon_intervals or model.projected_cds_intervals
+    gene_start = min(s for s, _ in transcript_span_intervals)
+    gene_end = max(e for _, e in transcript_span_intervals)
 
     attrs_common = {
         "source": source,
-        "urcat_status": "new_locus",
         "urcat_class": assessment.final_class,
         "urcat_reason": assessment.final_reason,
         "urcat_cds_recovery": assessment.coding.cds_recovery,
@@ -525,7 +599,7 @@ def projected_cds_to_gff3_lines(
         "urcat_source_transcript": model.source_transcript_id,
     }
 
-    lines = []
+    lines: list[str] = []
     lines.append(
         "\t".join(
             [
@@ -537,13 +611,7 @@ def projected_cds_to_gff3_lines(
                 ".",
                 model.strand or ".",
                 ".",
-                gff3_attrs(
-                    {
-                        "ID": gene_id,
-                        "Name": gene_id,
-                        **attrs_common,
-                    }
-                ),
+                gff3_attrs({"ID": gene_id, "Name": gene_id, **attrs_common}),
             ]
         )
     )
@@ -558,22 +626,31 @@ def projected_cds_to_gff3_lines(
                 ".",
                 model.strand or ".",
                 ".",
-                gff3_attrs(
-                    {
-                        "ID": tx_id,
-                        "Parent": gene_id,
-                        "Name": tx_id,
-                        **attrs_common,
-                    }
-                ),
+                gff3_attrs({"ID": tx_id, "Parent": gene_id, "Name": tx_id, **attrs_common}),
             ]
         )
     )
 
-    phases = cds_phase_series(model.cds_intervals, model.strand)
-    cds_intervals_sorted = sorted(model.cds_intervals, key=lambda x: (x[0], x[1]))
+    exon_intervals = model.projected_exon_intervals or model.projected_cds_intervals
+    for i, (start, end) in enumerate(sorted(exon_intervals), start=1):
+        lines.append(
+            "\t".join(
+                [
+                    model.seqid,
+                    source,
+                    "exon",
+                    str(start),
+                    str(end),
+                    ".",
+                    model.strand or ".",
+                    ".",
+                    gff3_attrs({"ID": f"{tx_id}.exon{i}", "Parent": tx_id}),
+                ]
+            )
+        )
 
-    for i, ((start, end), phase) in enumerate(zip(cds_intervals_sorted, phases), start=1):
+    phases = cds_phase_series(model.projected_cds_intervals, model.strand)
+    for i, ((start, end), phase) in enumerate(zip(sorted(model.projected_cds_intervals), phases), start=1):
         lines.append(
             "\t".join(
                 [
@@ -585,12 +662,7 @@ def projected_cds_to_gff3_lines(
                     ".",
                     model.strand or ".",
                     str(phase),
-                    gff3_attrs(
-                        {
-                            "ID": f"{tx_id}.cds{i}",
-                            "Parent": tx_id,
-                        }
-                    ),
+                    gff3_attrs({"ID": f"{tx_id}.cds{i}", "Parent": tx_id}),
                 ]
             )
         )
