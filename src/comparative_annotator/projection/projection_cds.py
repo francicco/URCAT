@@ -500,11 +500,6 @@ def classify_projected_locus(
     coding: CodingIntegrityReport,
     fragmentation: AssemblyFragmentationReport,
 ) -> tuple[str, str]:
-    if fragmentation.is_fragmented_across_seqids:
-        if coding.cds_recovery is not None and coding.cds_recovery >= 0.7:
-            return "fragmented_cds", "split across multiple target seqids but substantial CDS recovered"
-        return "fragmented_cds", "split across multiple target seqids"
-
     if coding.classification_hint == "missing_cds":
         return "lost_cds", "no projected CDS recovered"
 
@@ -513,6 +508,11 @@ def classify_projected_locus(
 
     if coding.is_in_frame is False:
         return "lost_cds", "CDS length not divisible by 3"
+
+    if fragmentation.is_fragmented_across_seqids:
+        if coding.cds_recovery is not None and coding.cds_recovery >= 0.7:
+            return "fragmented_cds", "split across multiple target seqids but substantial CDS recovered"
+        return "fragmented_cds", "split across multiple target seqids"
 
     if (
         coding.cds_recovery is not None
