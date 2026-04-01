@@ -659,6 +659,52 @@ def annotate_missing_loci_and_choose_next(
                         diamond_hits_for_source=diamond_cache.get((source_species, target_species), {}),
                         source_protein_length=_estimate_source_protein_length_from_transcript(seed),
                     )
+
+                    # Record CDS diagnostics using accepted projected transcript models,
+                    # but do not use them yet to change acceptance logic.
+                    cds_assessment = None
+                    if pts:
+                        best_pt = max(pts, key=lambda tx: len(tx.exons))
+                        try:
+                            cds_model = build_projected_cds_model(
+                                source_tx=seed,
+                                projected_tx=best_pt,
+                                hal=hal,
+                                target_species=target_species,
+                                target_gene_id=None,
+                                target_transcript_id=getattr(best_pt, "source_transcript", None),
+                                target_genome_by_seqid=None,
+                                source_genome_by_seqid=None,
+                            )
+                            cds_assessment = assess_projected_cds(cds_model)
+                        except Exception:
+                            cds_assessment = None
+
+                    if cds_assessment is not None:
+                        candidate.cds_class = cds_assessment.final_class
+                        candidate.cds_reason = cds_assessment.final_reason
+                        candidate.cds_recovery = cds_assessment.coding.cds_recovery
+                        candidate.cds_has_start = cds_assessment.coding.has_start_codon
+                        candidate.cds_has_stop = cds_assessment.coding.has_stop_codon
+                        candidate.cds_internal_stop_count = cds_assessment.coding.internal_stop_count
+                        candidate.cds_is_in_frame = cds_assessment.coding.is_in_frame
+                        candidate.cds_fragmented_multi_seqid = (
+                            cds_assessment.fragmentation.is_fragmented_across_seqids
+                        )
+                        candidate.cds_fragment_seqids = ",".join(
+                            cds_assessment.fragmentation.seqids
+                        )
+                    else:
+                        candidate.cds_class = None
+                        candidate.cds_reason = None
+                        candidate.cds_recovery = None
+                        candidate.cds_has_start = None
+                        candidate.cds_has_stop = None
+                        candidate.cds_internal_stop_count = None
+                        candidate.cds_is_in_frame = None
+                        candidate.cds_fragmented_multi_seqid = None
+                        candidate.cds_fragment_seqids = None
+
                     candidate = classify_disrupted_projection_candidate(candidate)
 
                     fragmented_candidates_by_species.setdefault(target_species, []).append(candidate)
@@ -670,7 +716,6 @@ def annotate_missing_loci_and_choose_next(
                         "partial_fragment_supported",
                     }:
                         keep_for_consensus = False
-
             if keep_for_consensus:
                 projected_transcripts_for_consensus.extend(pts)
 
