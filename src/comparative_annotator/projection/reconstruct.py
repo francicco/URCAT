@@ -1,27 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
-
-@dataclass
-class ProjectedTranscript:
-    source_species: str
-    target_species: str
-    source_transcript: str
-    seqid: str
-    strand: str
-    exons: list[tuple[int, int]] = field(default_factory=list)
-    source_exon_numbers: list[int] = field(default_factory=list)
-    source_blocks: list[dict[str, Any]] = field(default_factory=list)
-
-    @property
-    def start(self) -> int:
-        return min(s for s, _ in self.exons) if self.exons else 0
-
-    @property
-    def end(self) -> int:
-        return max(e for _, e in self.exons) if self.exons else 0
+from comparative_annotator.models.projected_transcript import ProjectedTranscript
 
 
 @dataclass
@@ -31,25 +14,22 @@ class _ProjectedBlock:
     target_start: int
     target_end: int
     target_strand: str
-    chain_score: float | None = None
+    chain_score: float = 0.0
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _norm_interval(start: int, end: int) -> tuple[int, int]:
     return (start, end) if start <= end else (end, start)
 
 
 def _interval_len(start: int, end: int) -> int:
-    start, end = _norm_interval(start, end)
-    return end - start + 1
+    s, e = _norm_interval(start, end)
+    return e - s + 1
 
 
 def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     if not intervals:
         return []
+
     ordered = sorted(_norm_interval(s, e) for s, e in intervals)
     merged = [ordered[0]]
     for start, end in ordered[1:]:
@@ -61,208 +41,93 @@ def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def _coerce_projection_block(iv: Any, source_exon_number: int) -> _ProjectedBlock:
-    return _ProjectedBlock(
-        source_exon_number=int(source_exon_number),
-        target_seqid=iv.seqid,
-        target_start=int(iv.start),
-        target_end=int(iv.end),
-        target_strand=iv.strand,
-        chain_score=getattr(iv, "chain_score", None),
-    )
-
-
-def _flatten_projected_exon_blocks(projected_exon_blocks: list[list[Any]]) -> list[_ProjectedBlock]:
-    out: list[_ProjectedBlock] = []
-    for exon_idx, hits in enumerate(projected_exon_blocks, start=1):
-        for iv in hits:
-            out.append(_coerce_projection_block(iv, exon_idx))
-    return out
-
-
-def _dominant_strand(rows: list[_ProjectedBlock], fallback: str) -> str:
-    support: dict[str, int] = {}
-    for r in rows:
-        support[r.target_strand] = support.get(r.target_strand, 0) + 1
-    if not support:
-        return fallback
-    return sorted(support.items(), key=lambda x: (-x[1], x[0]))[0][0]
-
-
-def _group_blocks_by_seqid_and_strand(rows: list[_ProjectedBlock]) -> dict[tuple[str, str], list[_ProjectedBlock]]:
-    grouped: dict[tuple[str, str], list[_ProjectedBlock]] = {}
-    for r in rows:
-        grouped.setdefault((r.target_seqid, r.target_strand), []).append(r)
-    return grouped
-
-
-def _pick_best_row_per_source_exon(rows: list[_ProjectedBlock]) -> list[_ProjectedBlock]:
-    by_exon: dict[int, list[_ProjectedBlock]] = {}
-    for r in rows:
-        by_exon.setdefault(r.source_exon_number, []).append(r)
-
+def _choose_best_block_per_exon(projected_exon_blocks: list[list[Any]]) -> list[_ProjectedBlock]:
     chosen: list[_ProjectedBlock] = []
-    for exon_no in sorted(by_exon):
-        exon_rows = sorted(
-            by_exon[exon_no],
-            key=lambda x: ((x.chain_score or 0.0), _interval_len(x.target_start, x.target_end)),
+    for exon_no, hits in enumerate(projected_exon_blocks, start=1):
+        if not hits:
+            continue
+        best = sorted(
+            hits,
+            key=lambda x: (
+                getattr(x, "chain_score", 0.0) or 0.0,
+                _interval_len(int(x.start), int(x.end)),
+            ),
             reverse=True,
+        )[0]
+        chosen.append(
+            _ProjectedBlock(
+                source_exon_number=exon_no,
+                target_seqid=best.seqid,
+                target_start=int(best.start),
+                target_end=int(best.end),
+                target_strand=best.strand,
+                chain_score=float(getattr(best, "chain_score", 0.0) or 0.0),
+            )
         )
-        chosen.append(exon_rows[0])
     return chosen
 
 
-def _coalesce_same_exon_fragments(rows: list[_ProjectedBlock]) -> list[_ProjectedBlock]:
-    by_key: dict[tuple[int, str, str], list[tuple[int, int]]] = {}
-    chain_scores: dict[tuple[int, str, str], float | None] = {}
+def _group_blocks_into_transcripts(blocks: list[_ProjectedBlock]) -> list[list[_ProjectedBlock]]:
+    by_seqid_strand: dict[tuple[str, str], list[_ProjectedBlock]] = defaultdict(list)
+    for b in blocks:
+        by_seqid_strand[(b.target_seqid, b.target_strand)].append(b)
 
-    for r in rows:
-        key = (r.source_exon_number, r.target_seqid, r.target_strand)
-        by_key.setdefault(key, []).append((r.target_start, r.target_end))
-        best_score = chain_scores.get(key)
-        cur_score = r.chain_score
-        if best_score is None or ((cur_score or 0.0) > (best_score or 0.0)):
-            chain_scores[key] = cur_score
+    grouped: list[list[_ProjectedBlock]] = []
+    for _, rows in by_seqid_strand.items():
+        grouped.append(sorted(rows, key=lambda x: x.source_exon_number))
+    return grouped
 
-    out: list[_ProjectedBlock] = []
-    for (exon_no, seqid, strand), intervals in by_key.items():
-        for start, end in _merge_intervals(intervals):
-            out.append(
-                _ProjectedBlock(
-                    source_exon_number=exon_no,
-                    target_seqid=seqid,
-                    target_start=start,
-                    target_end=end,
-                    target_strand=strand,
-                    chain_score=chain_scores[(exon_no, seqid, strand)],
-                )
-            )
-    return sorted(out, key=lambda x: (x.source_exon_number, x.target_start, x.target_end))
-
-
-def _rows_to_projected_transcript(
-    rows: list[_ProjectedBlock],
-    seed_transcript: Any,
-    target_species: str,
-) -> ProjectedTranscript | None:
-    if not rows:
-        return None
-
-    rows = _coalesce_same_exon_fragments(rows)
-    seqid = rows[0].target_seqid
-    strand = rows[0].target_strand or getattr(seed_transcript, "strand", "+")
-
-    exons = [_norm_interval(r.target_start, r.target_end) for r in rows]
-    source_exon_numbers = [r.source_exon_number for r in rows]
-    source_blocks = [
-        {
-            "source_exon_number": r.source_exon_number,
-            "target_seqid": r.target_seqid,
-            "target_start": r.target_start,
-            "target_end": r.target_end,
-            "target_strand": r.target_strand,
-            "chain_score": r.chain_score,
-        }
-        for r in rows
-    ]
-
-    return ProjectedTranscript(
-        source_species=getattr(seed_transcript, "species", "unknown"),
-        target_species=target_species,
-        source_transcript=getattr(seed_transcript, "transcript_id", getattr(seed_transcript, "source_transcript", "unknown")),
-        seqid=seqid,
-        strand=strand,
-        exons=exons,
-        source_exon_numbers=source_exon_numbers,
-        source_blocks=source_blocks,
-    )
-
-
-def _target_order_consistent(rows: list[_ProjectedBlock]) -> bool:
-    if not rows:
-        return True
-    strand = rows[0].target_strand
-    rows = sorted(rows, key=lambda x: x.source_exon_number)
-    starts = [_norm_interval(r.target_start, r.target_end)[0] for r in rows]
-    if strand == "-":
-        return starts == sorted(starts, reverse=True)
-    return starts == sorted(starts)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def reconstruct_projected_transcripts(
-    seed_transcript: Any,
+    seed_transcript,
     projected_exon_blocks: list[list[Any]],
     max_intron_gap: int | None = None,
 ) -> list[ProjectedTranscript]:
     """
-    Reconstruct conservative projected transcript models from flattened HAL exon projections.
+    Reconstruct projected transcripts from exon-wise HAL projections.
 
-    Current behavior is intentionally strict:
-    - blocks are separated by target seqid and strand
-    - within each (seqid, strand) group, only the best block per source exon is kept
-    - a group is emitted only if exon order on the target is consistent
-    - each emitted transcript is a projected transcript candidate, not a fully validated orthology call
-
-    Parameters
-    ----------
-    seed_transcript:
-        Source transcript object. Must expose at least `species`, `transcript_id`, and `strand`.
-    projected_exon_blocks:
-        One list of HAL intervals per source exon, in source exon order.
-    max_intron_gap:
-        Reserved for later use. Currently ignored.
+    Current implementation chooses one best projection block per source exon,
+    then groups compatible blocks by target seqid and strand.
     """
-    del max_intron_gap
+    if max_intron_gap is not None:
+        raise NotImplementedError("max_intron_gap is not implemented in reconstruct_projected_transcripts")
 
-    flat_rows = _flatten_projected_exon_blocks(projected_exon_blocks)
-    if not flat_rows:
+    chosen_blocks = _choose_best_block_per_exon(projected_exon_blocks)
+    if not chosen_blocks:
         return []
 
-    grouped = _group_blocks_by_seqid_and_strand(flat_rows)
-    transcripts: list[ProjectedTranscript] = []
+    txs: list[ProjectedTranscript] = []
+    for rows in _group_blocks_into_transcripts(chosen_blocks):
+        seqid = rows[0].target_seqid
+        strand = rows[0].target_strand
+        exon_intervals = _merge_intervals([(r.target_start, r.target_end) for r in rows])
+        recovered_exons = [r.source_exon_number for r in rows]
+        target_seqids = sorted({r.target_seqid for r in rows})
+        total_chain_score = sum(r.chain_score for r in rows)
+        mean_chain_score = total_chain_score / len(rows) if rows else 0.0
 
-    for (target_seqid, target_strand), rows in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
-        chosen = _pick_best_row_per_source_exon(rows)
-        if not chosen:
-            continue
-
-        if not _target_order_consistent(chosen):
-            # keep the candidate only if at least two exons still support a usable chain after monotonic filtering
-            monotonic: list[_ProjectedBlock] = []
-            chosen_sorted = sorted(chosen, key=lambda x: x.source_exon_number)
-            last_pos: int | None = None
-            for r in chosen_sorted:
-                pos = _norm_interval(r.target_start, r.target_end)[0]
-                if last_pos is None:
-                    monotonic.append(r)
-                    last_pos = pos
-                    continue
-                if target_strand == "-":
-                    if pos <= last_pos:
-                        monotonic.append(r)
-                        last_pos = pos
-                else:
-                    if pos >= last_pos:
-                        monotonic.append(r)
-                        last_pos = pos
-            chosen = monotonic
-
-        if not chosen:
-            continue
-
-        tx = _rows_to_projected_transcript(
-            rows=chosen,
-            seed_transcript=seed_transcript,
-            target_species=getattr(rows[0], "target_species", None) or "unknown",
+        txs.append(
+            ProjectedTranscript(
+                species=seed_transcript.species if False else getattr(seed_transcript, "target_species", None) or "",
+                source_species=seed_transcript.species,
+                source_transcript=seed_transcript.transcript_id,
+                seqid=seqid,
+                strand=strand,
+                exons=exon_intervals,
+                target_seqids=target_seqids,
+                chain_orientation="forward" if strand == seed_transcript.strand else "reverse",
+                total_chain_score=total_chain_score,
+                mean_chain_score=mean_chain_score,
+                exon_recovery_fraction=len(recovered_exons) / max(1, len(seed_transcript.exons)),
+                n_source_exons=len(seed_transcript.exons),
+                recovered_exon_numbers=recovered_exons,
+                source_seqid=seed_transcript.seqid,
+                source_strand=seed_transcript.strand,
+            )
         )
-        if tx is not None:
-            tx.seqid = target_seqid
-            tx.strand = _dominant_strand(chosen, getattr(seed_transcript, "strand", "+"))
-            transcripts.append(tx)
 
-    transcripts.sort(key=lambda tx: (tx.seqid, tx.start, tx.end, tx.source_transcript))
-    return transcripts
+    # Fill target species explicitly on the projected objects.
+    for tx in txs:
+        tx.species = getattr(seed_transcript, "_reconstruct_target_species", None) or tx.species
+
+    return txs
