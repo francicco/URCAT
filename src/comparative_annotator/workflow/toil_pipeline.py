@@ -21,6 +21,10 @@ from comparative_annotator.missing.consensus import (
     choose_missing_locus_strand,
     cluster_projected_transcripts,
 )
+from comparative_annotator.projection.projection_cds import (
+    build_projected_cds_model,
+    assess_projected_cds,
+)
 from comparative_annotator.workflow.fragmented_join import (
     build_fragmented_candidate,
     add_protein_support_to_candidate,
