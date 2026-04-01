@@ -677,7 +677,25 @@ def annotate_missing_loci_and_choose_next(
                                 source_genome_by_seqid=None,
                             )
                             cds_assessment = assess_projected_cds(cds_model)
-                        except Exception:
+
+                            print(
+                                "CDSDEBUG",
+                                seed.transcript_id,
+                                target_species,
+                                "class=", cds_assessment.final_class,
+                                "recovery=", cds_assessment.coding.cds_recovery,
+                                "in_frame=", cds_assessment.coding.is_in_frame,
+                                "frag_multi=", cds_assessment.fragmentation.is_fragmented_across_seqids,
+                                "frag_seqids=", ",".join(cds_assessment.fragmentation.seqids),
+                            )
+
+                        except Exception as e:
+                            print(
+                                "CDSDEBUG_FAIL",
+                                seed.transcript_id,
+                                target_species,
+                                repr(e),
+                            )
                             cds_assessment = None
 
                     if cds_assessment is not None:
@@ -688,12 +706,8 @@ def annotate_missing_loci_and_choose_next(
                         candidate.cds_has_stop = cds_assessment.coding.has_stop_codon
                         candidate.cds_internal_stop_count = cds_assessment.coding.internal_stop_count
                         candidate.cds_is_in_frame = cds_assessment.coding.is_in_frame
-                        candidate.cds_fragmented_multi_seqid = (
-                            cds_assessment.fragmentation.is_fragmented_across_seqids
-                        )
-                        candidate.cds_fragment_seqids = ",".join(
-                            cds_assessment.fragmentation.seqids
-                        )
+                        candidate.cds_fragmented_multi_seqid = cds_assessment.fragmentation.is_fragmented_across_seqids
+                        candidate.cds_fragment_seqids = ",".join(cds_assessment.fragmentation.seqids)
                     else:
                         candidate.cds_class = None
                         candidate.cds_reason = None
