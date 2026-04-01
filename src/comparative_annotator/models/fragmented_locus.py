@@ -43,7 +43,6 @@ class FragmentedComparativeLocus:
     max_consecutive_recovered_exons: int | None = None
     consecutive_exon_fraction: float | None = None
 
-    # New CDS diagnostics
     cds_class: str | None = None
     cds_reason: str | None = None
     cds_recovery: float | None = None
@@ -82,7 +81,6 @@ class FragmentedComparativeLocus:
             "max_consecutive_recovered_exons": self.max_consecutive_recovered_exons,
             "consecutive_exon_fraction": None if self.consecutive_exon_fraction is None else round(self.consecutive_exon_fraction, 4),
 
-            # CDS diagnostics
             "cds_class": self.cds_class,
             "cds_reason": self.cds_reason,
             "cds_recovery": None if self.cds_recovery is None else round(self.cds_recovery, 4),
