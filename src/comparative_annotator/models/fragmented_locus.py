@@ -18,22 +18,19 @@ class FragmentedComparativeLocus:
     source_species: str
     source_transcript: str
     target_species: str
-
     source_seqid: str
     source_strand: str
     n_source_exons: int
 
-    target_seqids: list[str]
+    target_seqids: list[str] = field(default_factory=list)
     blocks: list[FragmentedBlock] = field(default_factory=list)
-
     recovered_exon_numbers: list[int] = field(default_factory=list)
-    exon_recovery_fraction: float = 0.0
-    strand_consistent: bool = True
-    exon_order_consistent: bool = True
-    total_chain_score: float = 0.0
 
+    exon_recovery_fraction: float = 0.0
+    strand_consistent: bool = False
+    exon_order_consistent: bool = False
+    total_chain_score: float = 0.0
     join_score: float = 0.0
-    status: str = "fragmented"
 
     aa_identity_mean: float | None = None
     aa_coverage_fraction: float | None = None
@@ -45,6 +42,19 @@ class FragmentedComparativeLocus:
 
     max_consecutive_recovered_exons: int | None = None
     consecutive_exon_fraction: float | None = None
+
+    # New CDS diagnostics
+    cds_class: str | None = None
+    cds_reason: str | None = None
+    cds_recovery: float | None = None
+    cds_has_start: bool | None = None
+    cds_has_stop: bool | None = None
+    cds_internal_stop_count: int | None = None
+    cds_is_in_frame: bool | None = None
+    cds_fragmented_multi_seqid: bool | None = None
+    cds_fragment_seqids: str | None = None
+
+    status: str = "fragmented"
 
     def to_row(self) -> dict:
         return {
@@ -71,5 +81,17 @@ class FragmentedComparativeLocus:
             "classification_reason": self.classification_reason,
             "max_consecutive_recovered_exons": self.max_consecutive_recovered_exons,
             "consecutive_exon_fraction": None if self.consecutive_exon_fraction is None else round(self.consecutive_exon_fraction, 4),
+
+            # CDS diagnostics
+            "cds_class": self.cds_class,
+            "cds_reason": self.cds_reason,
+            "cds_recovery": None if self.cds_recovery is None else round(self.cds_recovery, 4),
+            "cds_has_start": self.cds_has_start,
+            "cds_has_stop": self.cds_has_stop,
+            "cds_internal_stop_count": self.cds_internal_stop_count,
+            "cds_is_in_frame": self.cds_is_in_frame,
+            "cds_fragmented_multi_seqid": self.cds_fragmented_multi_seqid,
+            "cds_fragment_seqids": self.cds_fragment_seqids,
+
             "status": self.status,
         }
