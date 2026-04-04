@@ -15,6 +15,33 @@ def infer_comparative_locus(
     species_loci,
     transcripts_by_species=None,
 ):
+    """
+    Project one seed transcript into one target species and build a ComparativeLocus.
+
+    Parameters
+    ----------
+    seed_transcript
+        Source transcript object. Expected to provide at least:
+        - species
+        - transcript_id
+        - seqid
+        - strand
+        - exons
+    target_species
+        Species into which the seed transcript is projected.
+    hal_adapter
+        HAL adapter exposing `project_interval(...)`.
+    species_loci
+        Mapping of species -> locus objects, used by the comparative builder.
+    transcripts_by_species
+        Optional mapping of species -> transcript objects, forwarded to the
+        comparative builder.
+
+    Returns
+    -------
+    ComparativeLocus
+        Locus-level interpretation of the projection in the target species.
+    """
     projected_exon_blocks = []
 
     for exon_start, exon_end in seed_transcript.exons:
@@ -30,8 +57,9 @@ def infer_comparative_locus(
         projected_exon_blocks.append(intervals)
 
     projected_transcripts = reconstruct_projected_transcripts(
-        seed_transcript,
-        projected_exon_blocks,
+        seed_transcript=seed_transcript,
+        projected_exon_blocks=projected_exon_blocks,
+        target_species=target_species,
     )
 
     clocus = build_comparative_locus_from_projection(
