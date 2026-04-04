@@ -147,7 +147,10 @@ def collect_projected_transcript_spans_for_species(
                 )
                 projected_exon_blocks.append(intervals)
 
-            pts = reconstruct_projected_transcripts(seed, projected_exon_blocks)
+            pts = reconstruct_projected_transcripts(seed,
+                projected_exon_blocks,
+                target_species=target_species,
+            )
 
             for pt in pts:
                 spans.append(
