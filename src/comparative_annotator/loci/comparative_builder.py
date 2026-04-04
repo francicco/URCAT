@@ -29,6 +29,7 @@ def build_comparative_locus_from_projection(
     species_loci,
     source_transcript=None,
     transcripts_by_species=None,
+    target_species=None,
 ):
     """
     Build a ComparativeLocus object from projected transcripts.
@@ -38,13 +39,14 @@ def build_comparative_locus_from_projection(
     For each projected transcript:
         - find overlapping loci
         - classify:
-            * primary (best overlap, same strand)
-            * alternatives (other same-strand overlaps)
-            * strand conflicts (overlap but wrong strand)
-            * missing (no overlaps)
+            * primary
+            * alternatives
+            * strand conflicts
+            * missing
 
     Additionally:
-        - if NO projected transcripts exist → record missing
+        - if NO projected transcripts exist, record a missing projection for the
+          requested target_species.
     """
 
     clocus = ComparativeLocus(
@@ -57,10 +59,13 @@ def build_comparative_locus_from_projection(
     # CASE 1: no projected transcripts at all
     # --------------------------------------------------
     if not projected_transcripts:
-        # This is CRITICAL — previously missing
+        if target_species is None:
+            raise ValueError(
+                "target_species must be provided when projected_transcripts is empty"
+            )
         clocus.add_missing_projection(
-            species="UNKNOWN",  # fallback, pipeline should override if needed
-            projection_id=f"NO_PROJECTION:{seed_transcript}",
+            target_species,
+            f"NO_PROJECTION:{seed_transcript}",
         )
         return clocus
 
@@ -68,9 +73,8 @@ def build_comparative_locus_from_projection(
     # Process each projected transcript
     # --------------------------------------------------
     for proj in projected_transcripts:
-        target_species = proj.species
-
-        loci = species_loci.get(target_species, [])
+        proj_target_species = proj.species
+        loci = species_loci.get(proj_target_species, [])
         overlapping = []
 
         for locus in loci:
@@ -83,14 +87,11 @@ def build_comparative_locus_from_projection(
         # --------------------------------------------------
         if not overlapping:
             clocus.add_missing_projection(
-                target_species,
+                proj_target_species,
                 f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}",
             )
             continue
 
-        # --------------------------------------------------
-        # Partition by strand
-        # --------------------------------------------------
         same_strand = []
         opposite_strand = []
 
@@ -100,53 +101,51 @@ def build_comparative_locus_from_projection(
             else:
                 opposite_strand.append((locus, frac))
 
-        # --------------------------------------------------
-        # Strand conflicts
-        # --------------------------------------------------
         for locus, _ in opposite_strand:
-            clocus.add_strand_conflict(target_species, locus.locus_id)
+            clocus.add_strand_conflict(proj_target_species, locus.locus_id)
 
-        # --------------------------------------------------
-        # No same-strand → only conflicts → treat as missing
-        # --------------------------------------------------
+        # only wrong-strand overlaps -> still missing annotation
         if not same_strand:
             clocus.add_missing_projection(
-                target_species,
+                proj_target_species,
                 f"{proj.seqid}:{proj.start}-{proj.end}:{proj.strand}",
             )
             continue
 
-        # --------------------------------------------------
-        # Select primary (best overlap)
-        # --------------------------------------------------
         same_strand.sort(key=lambda x: x[1], reverse=True)
 
-        best_locus, best_score = same_strand[0]
-        clocus.set_primary(target_species, best_locus.locus_id)
+        best_locus, _ = same_strand[0]
+        clocus.set_primary(proj_target_species, best_locus.locus_id)
 
-        # --------------------------------------------------
-        # Set primary transcript if available
-        # --------------------------------------------------
         if transcripts_by_species:
-            txs = transcripts_by_species.get(target_species, {})
-            if best_locus.locus_id in txs:
-                clocus.set_primary_transcript(
-                    target_species,
-                    txs[best_locus.locus_id],
-                )
+            txs = transcripts_by_species.get(proj_target_species, {})
+            best_tx = txs.get(best_locus.locus_id)
+            if best_tx:
+                if isinstance(best_tx, str):
+                    clocus.set_primary_transcript(proj_target_species, best_tx)
+                else:
+                    tx_id = getattr(best_tx, "transcript_id", None)
+                    if tx_id:
+                        clocus.set_primary_transcript(proj_target_species, tx_id)
 
-        # --------------------------------------------------
-        # Alternatives (remaining same-strand loci)
-        # --------------------------------------------------
         alt_ids = [l.locus_id for l, _ in same_strand[1:]]
-
         if alt_ids:
-            clocus.set_alternatives(target_species, alt_ids)
+            clocus.set_alternatives(proj_target_species, alt_ids)
 
             if transcripts_by_species:
-                txs = transcripts_by_species.get(target_species, {})
-                alt_txs = [txs[lid] for lid in alt_ids if lid in txs]
+                txs = transcripts_by_species.get(proj_target_species, {})
+                alt_txs = []
+                for lid in alt_ids:
+                    tx_obj = txs.get(lid)
+                    if tx_obj is None:
+                        continue
+                    if isinstance(tx_obj, str):
+                        alt_txs.append(tx_obj)
+                    else:
+                        tx_id = getattr(tx_obj, "transcript_id", None)
+                        if tx_id:
+                            alt_txs.append(tx_id)
                 if alt_txs:
-                    clocus.set_alternative_transcripts(target_species, alt_txs)
+                    clocus.set_alternative_transcripts(proj_target_species, alt_txs)
 
     return clocus
