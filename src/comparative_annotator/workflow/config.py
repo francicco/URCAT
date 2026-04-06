@@ -14,6 +14,8 @@ class URCATConfig:
     species_list: list[str]
     annotation_paths: dict[str, str] = field(default_factory=dict)
     evidence: dict[str, dict[str, str]] = field(default_factory=dict)
+    keep_intermediates: bool = False
+    write_analysis_tables: bool = False
 
 
 def _require(cfg: configparser.ConfigParser, section: str, key: str) -> str:
@@ -154,6 +156,8 @@ def load_urcat_config(config_path: str) -> URCATConfig:
     seed_species = _require(cfg, "input", "seedSpecies")
     hal_path_raw = _require(cfg, "input", "halPath")
     batch_size_raw = _optional(cfg, "input", "batchSize", default="200")
+    keep_intermediates_raw = _optional(cfg, "workflow", "keepIntermediates", default="false")
+    write_analysis_tables_raw = _optional(cfg, "workflow", "writeAnalysisTables", default="false")
 
     hal_path_p = Path(hal_path_raw)
     if not hal_path_p.is_absolute():
@@ -163,6 +167,9 @@ def load_urcat_config(config_path: str) -> URCATConfig:
         batch_size = int(batch_size_raw)
     except ValueError as e:
         raise ValueError(f"Invalid integer for [input] batchSize: {batch_size_raw}") from e
+
+    keep_intermediates = keep_intermediates_raw.lower() in {"1", "true", "yes", "on"}
+    write_analysis_tables = write_analysis_tables_raw.lower() in {"1", "true", "yes", "on"}
 
     species_list = get_species_list_from_hal(str(hal_path_p))
     if seed_species not in species_list:
@@ -180,4 +187,6 @@ def load_urcat_config(config_path: str) -> URCATConfig:
         species_list=species_list,
         annotation_paths=annotation_paths,
         evidence=evidence,
+        keep_intermediates=keep_intermediates,
+        write_analysis_tables=write_analysis_tables,
     )
