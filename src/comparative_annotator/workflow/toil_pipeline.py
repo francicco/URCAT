@@ -166,10 +166,11 @@ def collect_projected_transcript_spans_for_species(
     return spans
 
 
-def finalize_round_outputs(output_dir: str, round_id: int) -> None:
+def finalize_round_outputs(output_dir: str, round_id: int, write_analysis_tables: bool = True) -> None:
+    if not write_analysis_tables:
+        return
     round_dir = get_round_dir(output_dir, round_id)
     write_all_analysis_tables_for_round(round_dir)
-
 
 def write_round_summary(job, workdir, round_merged_path, decision_path):
     round_merged = read_json(round_merged_path)
