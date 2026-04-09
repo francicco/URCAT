@@ -873,25 +873,25 @@ def annotate_missing_loci_and_choose_next(
     return str(ref_out_path)
 
 def run_target_edge_evidence(job, *args, **kwargs):
-    return _run_target_edge_evidence_impl(job, *args, **kwargs)
+    return _run_target_edge_evidence_impl(*args, **kwargs)
+
 
 def schedule_target_batches(
     job, workdir, cfg: URCATConfig, round_id,
     reference_species, target_species, manifest_path,
 ):
     target_job = job.addChildJobFn(
-        _run_target_edge_evidence_impl,
+        run_project_target,
         workdir, cfg, round_id, reference_species, target_species, manifest_path,
         memory="4G", disk="4G",
     )
-    edge_job = target_job.addFollowOnJobFn(
+    target_job.addFollowOnJobFn(
         run_target_edge_evidence,
         workdir, cfg, target_job.rv(),
         memory="4G", disk="4G",
     )
     return target_job.rv()
-
-
+    
 def schedule_next_round(job, decision_path, workdir, cfg: URCATConfig):
     decision = read_json(decision_path)
     if decision["stop"]:
