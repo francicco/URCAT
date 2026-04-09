@@ -321,29 +321,22 @@ def write_manifest(job, workdir, frontier_path, reference_species, target_specie
     else:
         raise ValueError(f"Unknown frontier kind: {frontier['frontier_kind']}")
 
-    batches = list(chunked(items, batch_size))
-    jobs = []
-    for target in target_species_list:
-        for batch_id, batch_items in enumerate(batches):
-            batch_file = (
-                Path(workdir) / "rounds" / f"round_{round_id:03d}"
-                / f"ref_{reference_species}" / f"target_{target}"
-                / f"batch_{batch_id:03d}.items.json"
-            )
-            write_json(batch_file, {"items": batch_items})
-            jobs.append({
-                "round_id": round_id,
-                "target_species": target,
-                "batch_id": batch_id,
-                "batch_file": str(batch_file),
-                "n_items": len(batch_items),
-            })
+    batches = []
+    for batch_id, batch_items in enumerate(chunked(items, batch_size)):
+        batches.append({
+            "batch_id": batch_id,
+            "n_items": len(batch_items),
+            "items": batch_items,
+        })
 
     manifest = {
         "round_id": round_id,
         "reference_species": reference_species,
         "batch_size": batch_size,
-        "jobs": jobs,
+        "targets": list(target_species_list),
+        "n_items": len(items),
+        "n_batches": len(batches),
+        "batches": batches,
     }
     manifest_path = (
         Path(workdir) / "rounds" / f"round_{round_id:03d}"
@@ -353,92 +346,72 @@ def write_manifest(job, workdir, frontier_path, reference_species, target_specie
     return str(manifest_path)
 
 
-def run_project_batch(
+def run_project_target(
     job, workdir, cfg: URCATConfig, round_id,
-    reference_species, target_species, batch_items_path, batch_id,
+    reference_species, target_species, manifest_path,
 ):
+    manifest = read_json(manifest_path)
+    batches = manifest["batches"]
+
     transcripts_by_species = load_all_transcripts(cfg.annotation_paths, cfg.species_list)
     species_loci = build_all_species_loci(transcripts_by_species)
     hal = HALAdapter(str(Path(cfg.hal_path).resolve()))
 
-    items = read_json(batch_items_path)["items"]
-    results = []
-
-    for item in items:
-        try:
-            if item["kind"] == "native_transcript":
-                source_label = item["transcript_id"]
-                seed = transcripts_by_species[reference_species][item["transcript_id"]]
-            elif item["kind"] == "urcat_consensus":
-                source_label = ",".join(item.get("source_transcripts", [])) or "URCAT_CONSENSUS"
-                seed = build_consensus_seed(item)
-            elif item["kind"] == "orphan_native_locus":
-                tx_id = item["transcripts"][0]
-                source_label = tx_id
-                seed = transcripts_by_species[reference_species][tx_id]
-            else:
-                raise ValueError(f"Unknown seed kind: {item['kind']}")
-
-            clocus = infer_comparative_locus(
-                seed_transcript=seed,
-                target_species=target_species,
-                hal_adapter=hal,
-                species_loci=species_loci,
-                transcripts_by_species=transcripts_by_species,
-            )
-            result = {
-                "source_species": reference_species,
-                "source_transcript": source_label,
-                "target_species": target_species,
-                "seed_kind": item["kind"],
-                "status": "ok",
-                "primary": clocus.primary,
-                "alternatives": clocus.alternatives,
-                "missing_annotations": clocus.missing_annotations,
-                "strand_conflicts": clocus.strand_conflicts,
-                "primary_transcripts": getattr(clocus, "primary_transcripts", {}),
-                "alternative_transcripts": getattr(clocus, "alternative_transcripts", {}),
-            }
-        except Exception as e:
-            result = {
-                "source_species": reference_species,
-                "source_transcript": item.get("transcript_id", item.get("locus_id", "unknown")),
-                "target_species": target_species,
-                "seed_kind": item.get("kind", "unknown"),
-                "status": "error",
-                "error": str(e),
-            }
-        results.append(result)
-
-    out = {
-        "round_id": round_id,
-        "reference_species": reference_species,
-        "target_species": target_species,
-        "batch_id": batch_id,
-        "n_items": len(items),
-        "results": results,
-    }
-    out_path = (
-        Path(workdir) / "rounds" / f"round_{round_id:03d}"
-        / f"ref_{reference_species}" / f"target_{target_species}"
-        / f"batch_{batch_id:03d}.json"
-    )
-    write_json(out_path, out)
-    return str(out_path)
-
-
-def merge_target_results(
-    job, workdir, round_id, reference_species, target_species, batch_result_paths,
-):
     merged_results = []
-    for p in batch_result_paths:
-        merged_results.extend(read_json(p)["results"])
+
+    for batch in batches:
+        items = batch["items"]
+        for item in items:
+            try:
+                if item["kind"] == "native_transcript":
+                    source_label = item["transcript_id"]
+                    seed = transcripts_by_species[reference_species][item["transcript_id"]]
+                elif item["kind"] == "urcat_consensus":
+                    source_label = ",".join(item.get("source_transcripts", [])) or "URCAT_CONSENSUS"
+                    seed = build_consensus_seed(item)
+                elif item["kind"] == "orphan_native_locus":
+                    tx_id = item["transcripts"][0]
+                    source_label = tx_id
+                    seed = transcripts_by_species[reference_species][tx_id]
+                else:
+                    raise ValueError(f"Unknown seed kind: {item['kind']}")
+
+                clocus = infer_comparative_locus(
+                    seed_transcript=seed,
+                    target_species=target_species,
+                    hal_adapter=hal,
+                    species_loci=species_loci,
+                    transcripts_by_species=transcripts_by_species,
+                )
+                result = {
+                    "source_species": reference_species,
+                    "source_transcript": source_label,
+                    "target_species": target_species,
+                    "seed_kind": item["kind"],
+                    "status": "ok",
+                    "primary": clocus.primary,
+                    "alternatives": clocus.alternatives,
+                    "missing_annotations": clocus.missing_annotations,
+                    "strand_conflicts": clocus.strand_conflicts,
+                    "primary_transcripts": getattr(clocus, "primary_transcripts", {}),
+                    "alternative_transcripts": getattr(clocus, "alternative_transcripts", {}),
+                }
+            except Exception as e:
+                result = {
+                    "source_species": reference_species,
+                    "source_transcript": item.get("transcript_id", item.get("locus_id", "unknown")),
+                    "target_species": target_species,
+                    "seed_kind": item.get("kind", "unknown"),
+                    "status": "error",
+                    "error": str(e),
+                }
+            merged_results.append(result)
 
     merged = {
         "round_id": round_id,
         "reference_species": reference_species,
         "target_species": target_species,
-        "n_batches": len(batch_result_paths),
+        "n_batches": len(batches),
         "n_results": len(merged_results),
         "results": merged_results,
     }
@@ -448,12 +421,6 @@ def merge_target_results(
     )
     write_json(out_path, merged)
     return str(out_path)
-
-
-def run_target_edge_evidence(job, workdir: str, cfg: URCATConfig, merged_target_path: str) -> str:
-    edge_json_path = _run_target_edge_evidence_impl(workdir, cfg, merged_target_path)
-    write_all_analysis_tables_for_target(Path(edge_json_path).parent)
-    return edge_json_path
 
 
 def merge_round_results(job, workdir, round_id, reference_species, merged_target_paths):
@@ -902,38 +869,27 @@ def annotate_missing_loci_and_choose_next(
             round_id, current_reference, target_species, loci,
         )
 
-    finalize_round_outputs(workdir, round_id)
+    finalize_round_outputs(workdir, round_id, write_analysis_tables=cfg.write_analysis_tables)
     return str(ref_out_path)
 
+def run_target_edge_evidence(job, *args, **kwargs):
+    return _run_target_edge_evidence_impl(job, *args, **kwargs)
 
 def schedule_target_batches(
     job, workdir, cfg: URCATConfig, round_id,
     reference_species, target_species, manifest_path,
 ):
-    manifest = read_json(manifest_path)
-    target_jobs = [j for j in manifest["jobs"] if j["target_species"] == target_species]
-
-    batch_rvs = []
-    for j in target_jobs:
-        batch_job = job.addChildJobFn(
-            run_project_batch,
-            workdir, cfg, round_id, reference_species, target_species,
-            j["batch_file"], j["batch_id"],
-            memory="4G", disk="4G",
-        )
-        batch_rvs.append(batch_job.rv())
-
-    merge_job = job.addFollowOnJobFn(
-        merge_target_results,
-        workdir, round_id, reference_species, target_species, batch_rvs,
-        memory="2G", disk="2G",
-    )
-    merge_job.addFollowOnJobFn(
-        run_target_edge_evidence,
-        workdir, cfg, merge_job.rv(),
+    target_job = job.addChildJobFn(
+        _run_target_edge_evidence_impl,
+        workdir, cfg, round_id, reference_species, target_species, manifest_path,
         memory="4G", disk="4G",
     )
-    return merge_job.rv()
+    edge_job = target_job.addFollowOnJobFn(
+        run_target_edge_evidence,
+        workdir, cfg, target_job.rv(),
+        memory="4G", disk="4G",
+    )
+    return target_job.rv()
 
 
 def schedule_next_round(job, decision_path, workdir, cfg: URCATConfig):
@@ -970,7 +926,7 @@ def schedule_round_from_manifest(
 ):
     manifest = read_json(manifest_path)
     round_id = manifest["round_id"]
-    targets = [sp for sp in cfg.species_list if sp != reference_species]
+    targets = manifest.get("targets") or [sp for sp in cfg.species_list if sp != reference_species]
 
     target_merge_rvs = []
     for target in targets:
